@@ -371,6 +371,174 @@ function _renderDetailContent(anime, episodes) {
     content.appendChild(noFiles);
   }
 
+  // ── Stream Online section (only for AniList-matched shows) ────────────────
+  if (anime.anime_id != null && anime.title) {
+    const streamSection = document.createElement("div");
+    streamSection.className = "stream-section";
+
+    const streamHeader = document.createElement("div");
+    streamHeader.className = "stream-header";
+    streamHeader.innerHTML = `
+      <span class="stream-header-label">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+        Stream Online
+      </span>
+      <button class="stream-expand-btn" id="stream-expand-btn">Load Episodes</button>
+    `;
+
+    const streamContent = document.createElement("div");
+    streamContent.className = "stream-content";
+    streamContent.style.display = "none";
+
+    let loaded = false;
+    streamHeader.querySelector("#stream-expand-btn").addEventListener("click", async function () {
+      if (streamContent.style.display === "none") {
+        streamContent.style.display = "block";
+        this.textContent = "Hide";
+      } else {
+        streamContent.style.display = "none";
+        this.textContent = loaded ? "Show" : "Load Episodes";
+        return;
+      }
+      if (loaded) return;
+      loaded = true;
+
+      streamContent.innerHTML = `<p class="stream-status">Searching Aniwatch…</p>`;
+      try {
+        const results = await invoke("search_online", { query: anime.title });
+        if (!results || results.length === 0) {
+          streamContent.innerHTML = `<p class="stream-status">Not found on Aniwatch.</p>`;
+          return;
+        }
+        const match = results[0];
+        const episodes = await invoke("get_episodes", { idanime: match.idanime });
+        streamContent.innerHTML = "";
+
+        if (!episodes || episodes.length === 0) {
+          streamContent.innerHTML = `<p class="stream-status">No episodes available.</p>`;
+          return;
+        }
+
+        // Dub/sub toggle
+        const toggleRow = document.createElement("div");
+        toggleRow.className = "stream-toggle-row";
+        let preferDub = false;
+        const subBtn  = document.createElement("button");
+        subBtn.textContent  = "Sub";
+        subBtn.className    = "stream-track-btn active";
+        const dubBtn  = document.createElement("button");
+        dubBtn.textContent  = "Dub";
+        dubBtn.className    = "stream-track-btn";
+        subBtn.addEventListener("click", () => { preferDub = false; subBtn.classList.add("active"); dubBtn.classList.remove("active"); });
+        dubBtn.addEventListener("click", () => { preferDub = true;  dubBtn.classList.add("active"); subBtn.classList.remove("active"); });
+        toggleRow.append(subBtn, dubBtn);
+        streamContent.appendChild(toggleRow);
+
+        const matchMeta = document.createElement("p");
+        matchMeta.className = "stream-match-meta";
+        matchMeta.textContent = `Match: ${match.name} (${episodes.length} episodes)`;
+        streamContent.appendChild(matchMeta);
+
+        const ul = document.createElement("ul");
+        ul.className = "episode-list";
+
+        for (const ep of episodes) {
+          const li = document.createElement("li");
+          li.className = "episode-item";
+          li.style.flexWrap = "wrap";
+
+          const num = document.createElement("span");
+          num.className = "episode-num";
+          num.textContent = `#${ep.order}`;
+
+          const name = document.createElement("span");
+          name.className = "episode-file";
+          name.textContent = ep.name || `Episode ${ep.order}`;
+
+          // ── Quality picker (shared between stream + download) ────────────
+          function buildQualityPicker(sources, onPick) {
+            // Remove any stale picker in this li
+            li.querySelectorAll(".quality-picker").forEach(p => p.remove());
+            if (sources.length === 1) { onPick(sources[0]); return; }
+            const picker = document.createElement("div");
+            picker.className = "quality-picker";
+            sources.forEach(src => {
+              const btn = document.createElement("button");
+              btn.className = "quality-option";
+              btn.textContent = src.label || src.kind || "Play";
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                picker.remove();
+                onPick(src);
+              });
+              picker.appendChild(btn);
+            });
+            li.appendChild(picker);
+            // Close on outside click
+            setTimeout(() => document.addEventListener("click", () => picker.remove(), { once: true }), 50);
+          }
+
+          // ── Stream button ────────────────────────────────────────────────
+          const streamBtn = document.createElement("button");
+          streamBtn.className = "play-btn";
+          streamBtn.title = "Stream in mpv";
+          streamBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+          streamBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            streamBtn.disabled = true;
+            try {
+              const sources = await invoke("get_stream_url", { epId: ep.ep_id, preferDub });
+              buildQualityPicker(sources, async (src) => {
+                await invoke("stream_episode", { url: src.url });
+                showToast(`Streaming ${src.label} in mpv…`);
+              });
+            } catch (err) {
+              showToast(`Stream error: ${err}`);
+            } finally {
+              streamBtn.disabled = false;
+            }
+          });
+
+          // ── Download button ──────────────────────────────────────────────
+          const dlBtn = document.createElement("button");
+          dlBtn.className = "play-btn dl-btn";
+          dlBtn.title = "Download with yt-dlp";
+          dlBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+          dlBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            dlBtn.disabled = true;
+            try {
+              const sources = await invoke("get_stream_url", { epId: ep.ep_id, preferDub });
+              buildQualityPicker(sources, async (src) => {
+                const epLabel = ep.name || `Episode ${ep.order}`;
+                const dir = await invoke("download_episode", {
+                  url: src.url,
+                  title: anime.title || "Unknown",
+                  epName: epLabel,
+                });
+                showToast(`Downloading to ${dir}`, 4000);
+              });
+            } catch (err) {
+              showToast(`Download error: ${err}`);
+            } finally {
+              dlBtn.disabled = false;
+            }
+          });
+
+          li.append(num, name, streamBtn, dlBtn);
+          ul.appendChild(li);
+        }
+        streamContent.appendChild(ul);
+      } catch (err) {
+        streamContent.innerHTML = `<p class="stream-status">Error: ${err}</p>`;
+      }
+    });
+
+    streamSection.append(streamHeader, streamContent);
+    content.appendChild(streamSection);
+  }
+
+
   // Remove from library button
   const removeBtn = document.createElement("button");
   removeBtn.className = "remove-btn";
@@ -457,9 +625,17 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("detail-close").addEventListener("click", closeDetail);
   document.getElementById("detail-overlay").addEventListener("click", closeDetail);
 
-  // Settings scan button
-  document.getElementById("settings-scan-btn").addEventListener("click", () => {
-    const path = document.getElementById("folder-path-input").value.trim();
+  // Settings scan button — opens native OS folder picker
+  document.getElementById("settings-scan-btn").addEventListener("click", async () => {
+    const status = document.getElementById("scan-status");
+    let path;
+    try {
+      path = await window.__TAURI__.dialog.open({ directory: true, multiple: false, title: "Choose Anime Folder" });
+    } catch (err) {
+      status.textContent = `Dialog error: ${err}`;
+      return;
+    }
+    if (!path) return; // user cancelled
     runScan(path);
   });
 

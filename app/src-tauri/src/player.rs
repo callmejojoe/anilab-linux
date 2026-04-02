@@ -43,3 +43,19 @@ pub fn play_episode(app: tauri::AppHandle, file_path: String) -> Result<(), Stri
     Ok(())
 }
 
+/// Tauri command: stream an HLS/online URL in mpv (no watched tracking).
+#[tauri::command]
+pub fn stream_episode(url: String) -> Result<(), String> {
+    let mpv = find_mpv().ok_or_else(|| {
+        "mpv not found. Please install mpv (e.g. `sudo apt install mpv`).".to_string()
+    })?;
+
+    Command::new(mpv)
+        .arg(&url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to launch mpv: {e}"))
+}

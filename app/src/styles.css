@@ -497,6 +497,108 @@ html, body {
   color: #fff;
 }
 
+/* ── Stream Online section ────────────────────────────────────────────────── */
+.stream-section {
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.stream-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--sidebar-bg);
+}
+.stream-header-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+}
+.stream-expand-btn {
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition);
+}
+.stream-expand-btn:hover { background: var(--accent-light); }
+.stream-content {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stream-toggle-row {
+  display: flex;
+  gap: 6px;
+}
+.stream-track-btn {
+  padding: 4px 14px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.stream-track-btn.active {
+  background: var(--caramel);
+  border-color: var(--caramel);
+  color: #fff;
+}
+.stream-match-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.stream-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* Quality picker popover */
+.quality-picker {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 4px;
+}
+.quality-option {
+  padding: 4px 14px;
+  border: 2px solid var(--caramel);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--caramel-dark);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition), color var(--transition);
+}
+.quality-option:hover {
+  background: var(--caramel);
+  color: #fff;
+}
+
+/* Download button — caramel tint to distinguish from stream (dark) */
+.dl-btn { background: var(--caramel) !important; }
+.dl-btn:hover { background: var(--caramel-dark) !important; }
+
 /* ── Add-to-library btn on search cards ─────────────────────────────────── */
 .card-add-btn {
   margin: 0 12px 12px;

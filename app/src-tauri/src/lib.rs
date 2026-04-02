@@ -3,6 +3,8 @@ mod anilist;
 mod scanner;
 mod matcher;
 mod player;
+mod streaming;
+mod downloader;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -25,7 +27,12 @@ pub fn run() {
             anilist::search_anime,
             scanner::scan_folder,
             matcher::match_anime,
-            player::play_episode
+            player::play_episode,
+            player::stream_episode,
+            streaming::search_online,
+            streaming::get_episodes,
+            streaming::get_stream_url,
+            downloader::download_episode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
