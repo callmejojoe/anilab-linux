@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "--ci",
+  "productName": "anilab",
   "version": "0.1.0",
   "identifier": "com.joejo.anilab",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "--ci",
+        "title": "anilab",
         "width": 800,
         "height": 600
       }
