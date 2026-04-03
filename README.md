@@ -1,48 +1,36 @@
-# 🧪 AniLab for Linux
+# AniLab Linux
 
-> A premium, high-performance Anime desktop client for Linux, built with Tauri and Rust. Optimized for CachyOS and the power user.
+AniLab Linux is a high-performance anime desktop client for Linux, designed to provide a seamless streaming and downloading experience. This project is a dedicated clone of the AniLab Android application, specifically optimized for CachyOS and Arch-based distributions. 
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Rust-cargo-orange.svg?style=flat-square&logo=rust" alt="Rust">
-  <img src="https://img.shields.io/badge/Tauri-v2-blue.svg?style=flat-square&logo=tauri" alt="Tauri">
-  <img src="https://img.shields.io/badge/Linux-CachyOS-green.svg?style=flat-square&logo=linux" alt="Linux">
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License">
-</p>
+The project is currently in active development, with the goal of bringing the "pain-free" anime experience of the original app to power users on the Linux desktop using modern web and systems technologies.
 
----
+## Features
 
-## ✨ Features
+- **Efficient Search**: Rapid title searching integrated with the AllAnime API.
+- **Embedded Streaming**: Native high-quality streaming utilizing a custom-built HTML5 player, eliminating the need for external tools for basic playback.
+- **Integrated Downloads**: High-speed anime downloads handled via `yt-dlp` for reliable offline access.
+- **Library Management**: Automated progress tracking and local file scanning with AniList metadata integration.
+- **Modern Interface**: A responsive, dark-mode UI built for Linux, emphasizing speed and visual clarity.
 
-- **🚀 Lightning Fast Search**: Instantly search through thousands of titles powered by the AllAnime API.
-- **📺 Cinematic Streaming**: High-quality streaming with a custom built-in HTML5 player. No external dependencies required for the best viewing experience.
-- **📥 One-Click Downloads**: High-speed downloads integrated directly with `yt-dlp` for offline viewing.
-- **📂 Library Management**: Scan local folders, match files to AniList metadata, and keep track of your progress automatically.
-- **🎨 Premium UI**: Optimized for Linux with a sleek, responsive dark-mode interface and smooth animations.
+## Technical Foundation
 
----
+- **Backend**: Rust and Tauri v2.
+- **Frontend**: Vanilla JavaScript and CSS, following modern design principles for a premium feel.
+- **Data Integrations**: AllAnime (Streaming/Search) and AniList (Metadata).
+- **Core Dependencies**: `reqwest`, `serde`, `tokio`, and `rusqlite`.
+- **System Dependencies**: `yt-dlp` for downloads and `mpv` for optional local playback.
 
-## 🛠️ Tech Stack
+## Installation and Development
 
-- **Backend**: [Rust](https://www.rust-lang.org/) + [Tauri v2](https://v2.tauri.app/)
-- **Frontend**: Vanilla JavaScript + CSS (Glassmorphism & Modern Aesthetics)
-- **APIs**: AllAnime (Streaming/Search), AniList (Metadata)
-- **Core Dependencies**: `reqwest`, `serde`, `tokio`, `rusqlite`
-- **External Tools**: `yt-dlp` (for downloads), `mpv` (opt-in for local files)
+### System Requirements (CachyOS / Arch Linux)
 
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-Make sure you have the following installed on your system:
+Ensure the necessary development tools and dependencies are installed on your system:
 
 ```bash
-# Arch/CachyOS
 sudo pacman -S base-devel curl wget openssl rustup yt-dlp mpv
 ```
 
-### Development
+### Development Setup
 
 1. Clone the repository:
    ```bash
@@ -50,31 +38,24 @@ sudo pacman -S base-devel curl wget openssl rustup yt-dlp mpv
    cd anilab-linux
    ```
 
-2. Run the dev server:
+2. Install dependencies and start the development environment:
    ```bash
-   # In the root directory
+   # From the root directory
    npm install
    npm run tauri dev
    ```
 
----
+## Roadmap and Development Status
 
-## 📝 To-Do
+The following features and integrations are planned or currently being implemented:
 
-- [x] AllAnime GQL API Integration
-- [x] XOR Decoder for Stream URLs
+- [x] AllAnime GraphQL API Integration
+- [x] Stream URL XOR Decoding
 - [x] In-App HTML5 Video Player
-- [ ] Watch History Syncing
-- [ ] Advanced Filter/Sorting for Search
-- [ ] MAL/AniList Account Integration
+- [ ] Watch History Synchronization
+- [ ] Advanced Search Filtering and Sorting
+- [ ] MyAnimeList and AniList Account Integration
 
 ---
 
-## ⚖️ License
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
----
-<p align="center">
-  <i>Created with ❤️ for the Linux Anime community.</i>
-</p>
+Created for the Linux anime community.
