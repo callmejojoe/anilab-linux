@@ -8,8 +8,8 @@ const API_BASE: &str = "https://api.allanime.day/api";
 const REFERER:  &str = "https://allmanga.to";
 const UA:       &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
 
-// Source name priority — tried in this order when resolving stream URLs.
-const SOURCE_PRIORITY: &[&str] = &["Default", "S-mp4", "Luf-Mp4"];
+// Source priority is defined locally inside get_stream_url so it can be
+// adjusted without touching constants. See that function for the ordered list.
 
 // ── Public return types ───────────────────────────────────────────────────────
 
@@ -24,6 +24,12 @@ pub struct OnlineAnime {
 #[derive(Serialize, Debug)]
 pub struct OnlineEpisode {
     pub episode: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct VideoQuality {
+    pub resolution: String,
+    pub url: String,
 }
 
 // ── Internal deserialisation types ───────────────────────────────────────────
@@ -110,9 +116,12 @@ async fn gql(client: &Client, query: &str, variables: Value) -> Result<Value, St
     Ok(body)
 }
 
-/// Fetch the clock.json endpoint, parse the response, and return the
-/// direct video URL from `links[0].link` (falling back to `links[0].src`).
-async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<String, String> {
+/// Fetch the clock.json endpoint, parse the response, and return all available
+/// quality options as a `Vec<VideoQuality>` by iterating through `links`.
+///
+/// Returns `Err` on any HTTP, parse, or structural failure so callers can
+/// silently `continue` to the next source instead of hard-failing.
+async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<Vec<VideoQuality>, String> {
     let final_path = decoded_path.replace("/clock", "/clock.json");
     let clock_url = format!("https://allanime.day{}", final_path);
 
@@ -128,12 +137,21 @@ async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<String,
     let status = resp.status();
     eprintln!("[AniLab] clock HTTP status: {}", status);
 
+    // Treat any non-2xx response as a soft failure — caller will continue loop.
+    if !status.is_success() {
+        return Err(format!("clock returned HTTP {status}"));
+    }
+
     let raw = resp
         .text()
         .await
         .map_err(|e| format!("clock read error: {e}"))?;
 
     eprintln!("[AniLab] clock raw body ({} bytes): {}", raw.len(), raw);
+
+    if raw.trim().is_empty() {
+        return Err("clock response body was empty".to_string());
+    }
 
     let v: Value = match serde_json::from_str(&raw) {
         Ok(v)  => v,
@@ -143,19 +161,35 @@ async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<String,
     // Pretty-print for terminal inspection.
     println!("{:#?}", v);
 
-    // Extract the video URL: links[0].link  →  links[0].src  →  error.
+    // Iterate through all entries in `links`, extracting resolution + URL.
     if let Some(links) = v.get("links").and_then(|l| l.as_array()) {
-        if let Some(first) = links.first() {
-            if let Some(url) = first.get("link").and_then(|u| u.as_str()) {
-                eprintln!("[AniLab] resolved stream URL: {}", url);
-                return Ok(url.to_string());
-            }
-            if let Some(url) = first.get("src").and_then(|u| u.as_str()) {
-                eprintln!("[AniLab] resolved stream URL (src): {}", url);
-                return Ok(url.to_string());
-            }
+        let mut qualities: Vec<VideoQuality> = links
+            .iter()
+            .filter_map(|entry| {
+                let url = entry
+                    .get("link")
+                    .or_else(|| entry.get("src"))
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string())?;
+
+                let resolution = entry
+                    .get("resolutionStr")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("Auto")
+                    .to_string();
+
+                eprintln!("[AniLab] quality found: {} → {}", resolution, url);
+                Some(VideoQuality { resolution, url })
+            })
+            .collect();
+
+        if qualities.is_empty() {
+            return Err(format!("links array present but no usable entries found: {v}"));
         }
-        return Err(format!("links array present but no 'link'/'src' field found: {v}"));
+
+        // Deduplicate by URL to avoid redundant entries.
+        qualities.dedup_by(|a, b| a.url == b.url);
+        return Ok(qualities);
     }
 
     Err(format!("No 'links' array in clock response: {v}"))
@@ -260,17 +294,21 @@ pub async fn get_episodes(show_id: String, mode: String) -> Result<Vec<String>, 
 
 /// Resolve a playable stream URL for a specific episode.
 ///
-/// 1. GraphQL → get `sourceUrls` for the episode.
-/// 2. Walk SOURCE_PRIORITY to find a source whose `sourceUrl` starts with `--`.
-/// 3. Strip `--`, XOR-decode the hex to get a path like `/apivtwo/clock?id=…`.
-/// 4. GET `https://blog.allanime.day{path}` and log the full JSON response.
-/// 5. Return DUMMY until the JSON schema is confirmed and we wire up extraction.
+/// Pipeline:
+/// 1. GraphQL → fetch `sourceUrls` for the episode.
+/// 2. Walk SOURCE_PRIORITY. For each matching encoded source:
+///    - Condition A: decoded URL starts with `"http"` AND is `.m3u8` or `.mp4` → return directly.
+///      If the URL is neither, it is an iframe/webpage — skip it.
+///    - Condition B: decoded URL starts with `"/apivtwo"` → fetch clock.json.
+///      On failure (500, parse error, empty body) log and continue to next source.
+/// 3. Fallback: walk any remaining encoded source not in the priority list.
+/// 4. Return Err only if all sources are exhausted.
 #[tauri::command]
 pub async fn get_stream_url(
     show_id: String,
     episode: String,
     mode:    String,
-) -> Result<String, String> {
+) -> Result<Vec<VideoQuality>, String> {
     let client = get_client();
 
     let gql_query = r#"
@@ -297,7 +335,6 @@ pub async fn get_stream_url(
         .and_then(|v| v.as_array())
         .ok_or_else(|| format!("No sourceUrls in response: {body}"))?;
 
-    // Deserialise — filter_map silently skips entries missing required fields.
     let sources: Vec<SourceUrl> = source_urls_raw
         .iter()
         .filter_map(|v| serde_json::from_value(v.clone()).ok())
@@ -308,30 +345,98 @@ pub async fn get_stream_url(
         eprintln!("  name={:?}  url={:?}", s.source_name, &s.source_url[..s.source_url.len().min(80)]);
     }
 
-    // Walk priority list — only consider sources with an encoded (--) URL.
-    for &preferred in SOURCE_PRIORITY {
-        if let Some(src) = sources.iter().find(|s| {
+    // ── Priority loop ─────────────────────────────────────────────────────────
+    // Priority order: reliable HLS-capable sources first, S-mp4 last-resort.
+    let priority: &[&str] = &["Luf-Mp4", "Default", "Fm-Hls", "Ss-Hls", "S-mp4"];
+
+    for &preferred in priority {
+        let src = match sources.iter().find(|s| {
             s.source_name.eq_ignore_ascii_case(preferred) && s.source_url.starts_with("--")
         }) {
-            let encoded = src.source_url.trim_start_matches('-');
-            let decoded = decode_url(encoded);
-            eprintln!("[AniLab] Chose source '{}', decoded path: {}", preferred, decoded);
-            return fetch_clock_path(&client, &decoded).await;
+            Some(s) => s,
+            None    => continue,
+        };
+
+        let encoded = src.source_url.trim_start_matches('-');
+        let decoded = decode_url(encoded);
+        eprintln!("[AniLab] Trying source '{}', decoded: {}", preferred, decoded);
+
+        // Condition A: already a full URL.
+        // Ban 1: Yt-mp4 source — always serves Fast4Speed iframe pages.
+        // Ban 2: any URL containing "fast4speed" in the domain — iframe, not a video file.
+        // Ban 3: URLs that are neither .m3u8 nor .mp4 are treated as iframes and skipped.
+        if decoded.starts_with("http") {
+            let is_banned_source = preferred.eq_ignore_ascii_case("Yt-mp4");
+            let is_banned_domain = decoded.to_lowercase().contains("fast4speed");
+            let is_video         = decoded.contains(".m3u8") || decoded.contains(".mp4");
+
+            if is_banned_source || is_banned_domain || !is_video {
+                eprintln!(
+                    "[AniLab] Source '{}' skipped — banned_source={} banned_domain={} is_video={}: {}",
+                    preferred, is_banned_source, is_banned_domain, is_video, decoded
+                );
+                continue;
+            }
+            eprintln!("[AniLab] Source '{}' decoded to a direct video URL, using as-is.", preferred);
+            return Ok(vec![VideoQuality { resolution: "Auto".to_string(), url: decoded }]);
+        }
+
+        // Condition B: clock path — attempt fetch, continue loop on any failure.
+        if decoded.starts_with("/apivtwo") {
+            match fetch_clock_path(&client, &decoded).await {
+                Ok(qualities) => {
+                    eprintln!("[AniLab] Source '{}' resolved {} quality option(s).", preferred, qualities.len());
+                    return Ok(qualities);
+                }
+                Err(e) => {
+                    eprintln!("[AniLab] Source '{}' clock fetch failed ({}), trying next.", preferred, e);
+                    continue;
+                }
+            }
+        }
+
+        // Decoded to something unexpected — log and skip.
+        eprintln!("[AniLab] Source '{}' decoded to unknown path '{}', skipping.", preferred, decoded);
+    }
+
+    // ── Fallback: any remaining encoded source not matched above ──────────────
+    for src in sources.iter().filter(|s| s.source_url.starts_with("--")) {
+        let encoded = src.source_url.trim_start_matches('-');
+        let decoded = decode_url(encoded);
+        eprintln!("[AniLab] Fallback source '{}', decoded: {}", src.source_name, decoded);
+
+        if decoded.starts_with("http") {
+            let is_banned_domain = decoded.to_lowercase().contains("fast4speed");
+            let is_banned_source = src.source_name.eq_ignore_ascii_case("Yt-mp4");
+            let is_video         = decoded.contains(".m3u8") || decoded.contains(".mp4");
+
+            if is_banned_source || is_banned_domain || !is_video {
+                eprintln!(
+                    "[AniLab] Fallback source '{}' skipped — banned={} no_video_ext={}: {}",
+                    src.source_name, is_banned_source || is_banned_domain, !is_video, decoded
+                );
+                continue;
+            }
+            return Ok(vec![VideoQuality { resolution: "Auto".to_string(), url: decoded }]);
+        }
+
+        if decoded.starts_with("/apivtwo") {
+            match fetch_clock_path(&client, &decoded).await {
+                Ok(qualities) => return Ok(qualities),
+                Err(e) => {
+                    eprintln!("[AniLab] Fallback source '{}' failed ({}), continuing.", src.source_name, e);
+                    continue;
+                }
+            }
         }
     }
 
-    // Fallback: any encoded source.
-    if let Some(src) = sources.iter().find(|s| s.source_url.starts_with("--")) {
-        let encoded = src.source_url.trim_start_matches('-');
-        let decoded = decode_url(encoded);
-        eprintln!("[AniLab] Fallback source '{}', decoded path: {}", src.source_name, decoded);
-        return fetch_clock_path(&client, &decoded).await;
-    }
-
     Err(format!(
-        "No encoded (--) sourceUrl found for show='{}' episode='{}' mode='{}'.\n\
+        "All sources exhausted for show='{}' episode='{}' mode='{}'.\n\
+         Tried priority: {:?}\n\
          Available sources: {:?}",
         show_id, episode, mode,
+        priority,
         sources.iter().map(|s| &s.source_name).collect::<Vec<_>>()
     ))
 }

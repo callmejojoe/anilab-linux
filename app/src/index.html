@@ -29,6 +29,12 @@
           <button class="nav-btn" id="nav-search" data-view="search">
             <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span> Search
           </button>
+          <button class="nav-btn" id="nav-downloads" data-view="downloads">
+            <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg></span> Downloads
+          </button>
+          <button class="nav-btn" id="nav-history" data-view="history">
+            <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></span> History
+          </button>
           <button class="nav-btn" id="nav-settings" data-view="settings">
             <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span> Settings
           </button>
@@ -81,6 +87,32 @@
           </div>
         </section>
 
+        <!-- Downloads view -->
+        <section id="view-downloads" class="view">
+          <header class="view-header">
+            <h1>Downloads</h1>
+          </header>
+          <div id="downloads-list" class="list-container">
+            <div class="empty-state" id="downloads-empty">
+              <span class="empty-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg></span>
+              <p>No downloads yet.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- History view -->
+        <section id="view-history" class="view">
+          <header class="view-header">
+            <h1>Watch History</h1>
+          </header>
+          <div id="history-list" class="list-container">
+            <div class="empty-state" id="history-empty">
+              <span class="empty-icon"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg></span>
+              <p>Your watch history is empty.</p>
+            </div>
+          </div>
+        </section>
+
         <!-- Settings view -->
         <section id="view-settings" class="view">
           <header class="view-header">
@@ -109,6 +141,18 @@
 
       <!-- ── Toast ─────────────────────────────────── -->
       <div id="toast" class="toast hidden"></div>
+
+      <!-- ── Persistent Global Download Bar ── -->
+      <div id="global-download-bar" class="global-download-bar hidden">
+        <div class="gdb-info">
+          <span class="gdb-title" id="gdb-title">Downloading...</span>
+          <span class="gdb-status" id="gdb-status">0%</span>
+        </div>
+        <div class="gdb-progress-wrap">
+          <div class="gdb-progress" id="gdb-progress"></div>
+        </div>
+        <button id="gdb-close" class="gdb-close" title="Dismiss">✕</button>
+      </div>
 
     </div>
   </body>

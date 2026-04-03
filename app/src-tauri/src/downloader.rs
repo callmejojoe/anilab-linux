@@ -1,52 +1,90 @@
+use tauri::{AppHandle, Emitter};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use tokio::process::Command as AsyncCommand;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use std::process::Stdio;
+use regex::Regex;
+use once_cell::sync::Lazy;
 
-const YTDLP_CANDIDATES: &[&str] = &[
-    "/usr/bin/yt-dlp",
-    "/usr/local/bin/yt-dlp",
-    "/opt/homebrew/bin/yt-dlp",
-    "yt-dlp",
-];
+static PROGRESS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[download\]\s+([\d\.]+)%").unwrap());
 
-fn find_ytdlp() -> Option<&'static str> {
-    YTDLP_CANDIDATES
-        .iter()
-        .copied()
-        .find(|&p| p == "yt-dlp" || Path::new(p).exists())
+#[derive(Clone, serde::Serialize)]
+pub struct DownloadProgressPayload {
+    pub id: i64,
+    pub progress: u8,
 }
 
-/// Tauri command: download any HLS/online URL using yt-dlp.
-/// `output_path` is the full destination path including filename template,
-/// e.g. "~/Videos/AniLab/Naruto/Episode_1.mp4".
-#[tauri::command]
-pub fn download_episode(url: String, output_path: String) -> Result<String, String> {
-    let ytdlp = find_ytdlp()
-        .ok_or_else(|| "yt-dlp not found. Install it with: pip install yt-dlp".to_string())?;
+#[derive(Clone, serde::Serialize)]
+pub struct DownloadCompletePayload {
+    pub id: i64,
+    pub status: String,
+    pub path: String,
+}
 
-    // Expand ~ to the real home directory
+/// Tauri command: start downloading an HLS stream or direct URL using yt-dlp asynchronously.
+#[tauri::command]
+pub fn download_episode(
+    app: AppHandle,
+    url: String, 
+    output_path: String,
+    download_id: i64, 
+) -> Result<String, String> {
     let expanded = if output_path.starts_with("~/") {
-        let home = dirs_next::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let home = dirs_next::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         home.join(&output_path[2..]).to_string_lossy().to_string()
     } else {
         output_path.clone()
     };
 
-    // Ensure parent directory exists
     if let Some(parent) = Path::new(&expanded).parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create output dir: {e}"))?;
+            .map_err(|e| format!("Could not create output directory: {e}"))?;
     }
 
-    eprintln!("[AniLab] download_episode → yt-dlp -o {} {}", expanded, url);
+    eprintln!("[AniLab] Background download {} → {}", download_id, expanded);
 
-    Command::new(ytdlp)
-        .args(["-o", &expanded, &url])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to launch yt-dlp: {e}"))?;
+    let expanded_clone = expanded.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        let mut child = match AsyncCommand::new("yt-dlp")
+            .args(["--newline", "-o", &expanded_clone, &url])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("yt-dlp spawn failed: {}", e);
+                let _ = app.emit("download-complete", DownloadCompletePayload { 
+                    id: download_id, status: "failed".into(), path: expanded_clone 
+                });
+                return;
+            }
+        };
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if let Some(caps) = PROGRESS_RE.captures(&line) {
+                    if let Ok(percent) = caps[1].parse::<f64>() {
+                        let _ = app.emit("download-progress", DownloadProgressPayload {
+                            id: download_id,
+                            progress: percent.round() as u8,
+                        });
+                    }
+                }
+            }
+        }
+
+        let status = match child.wait().await {
+            Ok(s) if s.success() => "completed",
+            _ => "failed",
+        };
+
+        let _ = app.emit("download-complete", DownloadCompletePayload { 
+            id: download_id, status: status.into(), path: expanded_clone 
+        });
+    });
 
     Ok(expanded)
 }

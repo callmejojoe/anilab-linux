@@ -66,83 +66,366 @@ function showToast(msg, duration = 2800) {
 
 // ── In-app video player ───────────────────────────────────────────────────────
 
-function openVideoPlayer(src, title = "") {
-  // Remove any existing player first
+/**
+ * Open the coffee-themed fullscreen video player.
+ *
+ * @param {string}  src       - Direct video URL (mp4) or HLS playlist (.m3u8).
+ * @param {string}  title     - Title shown in the control bar.
+ * @param {boolean} isHls     - When true, loads via hls.js.
+ * @param {object}  [context] - Optional context for Prev/Next navigation:
+ *                              { showId, allEpisodes, currentEp, mode }
+ */
+function openVideoPlayer(src, title = "", isHls = false, context = null) {
   document.getElementById("anilab-player-overlay")?.remove();
 
   const overlay = document.createElement("div");
   overlay.id = "anilab-player-overlay";
   overlay.style.cssText = [
     "position:fixed", "inset:0", "z-index:9999",
-    "background:rgba(0,0,0,0.93)",
+    "background:rgba(44,26,14,0.95)",
     "display:flex", "flex-direction:column",
     "justify-content:center", "align-items:center",
-    "gap:14px",
-    "backdrop-filter:blur(6px)",
-    "-webkit-backdrop-filter:blur(6px)",
+    "gap:0",
+    "backdrop-filter:blur(8px)",
+    "-webkit-backdrop-filter:blur(8px)",
   ].join(";");
 
-  // ── Title bar ──────────────────────────────────────────────────────────────
+  // ── Control bar ────────────────────────────────────────────────────────────
   const bar = document.createElement("div");
   bar.style.cssText = [
-    "width:80%", "display:flex", "justify-content:space-between",
-    "align-items:center", "gap:12px",
+    "width:82%",
+    "background:#E8D5B0",
+    "color:#2C1A0E",
+    "display:flex",
+    "justify-content:space-between",
+    "align-items:center",
+    "padding:8px 14px",
+    "border-radius:12px 12px 0 0",
+    "font-family:Inter,sans-serif",
+    "font-size:0.88rem",
+    "font-weight:600",
+    "letter-spacing:0.01em",
+    "flex-shrink:0",
   ].join(";");
+
+  const barLeft = document.createElement("div");
+  barLeft.style.cssText = "display:flex;align-items:center;gap:10px;overflow:hidden;";
 
   const label = document.createElement("span");
-  label.textContent = title;
-  label.style.cssText = "color:#fff;font-size:0.95rem;font-weight:600;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 44px);";
+  label.textContent = title || "Now Playing";
+  label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
 
-  const closeBtn = document.createElement("button");
-  closeBtn.title = "Close player";
-  closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-  closeBtn.style.cssText = [
-    "background:rgba(255,255,255,0.1)", "border:none", "border-radius:8px",
-    "color:#fff", "width:36px", "height:36px", "cursor:pointer",
-    "display:flex", "align-items:center", "justify-content:center",
-    "flex-shrink:0", "transition:background 0.15s",
+  barLeft.appendChild(label);
+
+  // Quality selector dropdown — populated after HLS manifest is parsed.
+  // Shown for all HLS streams; hidden for direct mp4 fallback.
+  const qualitySelector = document.createElement("select");
+  qualitySelector.id = "quality-selector";
+  qualitySelector.style.cssText = [
+    "background:#C49A6C",
+    "color:#2C1A0E",
+    "border:none",
+    "border-radius:6px",
+    "padding:4px 8px",
+    "font-weight:700",
+    "font-size:0.78rem",
+    "font-family:Inter,sans-serif",
+    "outline:none",
+    "cursor:pointer",
+    "display:none", // revealed once manifest levels are known
   ].join(";");
-  closeBtn.onmouseenter = () => closeBtn.style.background = "rgba(255,255,255,0.22)";
-  closeBtn.onmouseleave = () => closeBtn.style.background = "rgba(255,255,255,0.1)";
+  barLeft.appendChild(qualitySelector);
 
-  bar.append(label, closeBtn);
+  const btnGroup = document.createElement("div");
+  btnGroup.style.cssText = "display:flex;gap:8px;flex-shrink:0;";
+
+  function makeBarBtn(text, titleAttr) {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.title = titleAttr;
+    b.style.cssText = [
+      "background:#2C1A0E", "color:#E8D5B0", "border:none",
+      "border-radius:6px", "padding:4px 10px", "cursor:pointer",
+      "font-size:0.78rem", "font-weight:600", "font-family:Inter,sans-serif",
+      "transition:opacity 0.15s",
+    ].join(";");
+    b.onmouseenter = () => b.style.opacity = "0.75";
+    b.onmouseleave = () => b.style.opacity = "1";
+    return b;
+  }
+
+  const pipBtn   = makeBarBtn("PiP",   "Picture-in-Picture");
+  const dlBtn    = makeBarBtn("Download", "Download stream");
+  const closeBtn = makeBarBtn("Close", "Close player");
+
+  // Prev / Next — only rendered when a navigation context is provided
+  const prevBtn = context ? makeBarBtn("\u2039 Prev", "Previous episode") : null;
+  const nextBtn = context ? makeBarBtn("Next \u203a", "Next episode")     : null;
+
+  if (prevBtn) btnGroup.appendChild(prevBtn);
+  if (nextBtn) btnGroup.appendChild(nextBtn);
+  btnGroup.append(pipBtn, dlBtn, closeBtn);
+  bar.append(barLeft, btnGroup);
 
   // ── Video element ──────────────────────────────────────────────────────────
   const video = document.createElement("video");
-  video.src = src;
   video.controls = true;
-  video.autoplay = true;
   video.style.cssText = [
-    "width:80%", "max-height:80vh",
-    "border-radius:12px",
-    "box-shadow:0 20px 60px rgba(0,0,0,0.7)",
+    "width:82%",
+    "max-height:78vh",
+    "border-radius:0 0 12px 12px",
+    "box-shadow:0 24px 64px rgba(44,26,14,0.7),0 4px 16px rgba(0,0,0,0.5)",
     "background:#000",
+    "display:block",
   ].join(";");
 
-  // ── Close behaviour ────────────────────────────────────────────────────────
+  // ── HLS.js initialisation ───────────────────────────────────────────────────
+  let hlsInstance = null;
+
+  function initVideo() {
+    const isHlsUrl = src.includes(".m3u8");
+    if (isHlsUrl && typeof Hls !== "undefined" && Hls.isSupported()) {
+      hlsInstance = new Hls();
+      hlsInstance.loadSource(src);
+      hlsInstance.attachMedia(video);
+
+      // LEVEL_LOADED fires after hls.levels is fully populated — safer than MANIFEST_PARSED
+      // for sources where the level list may still be empty at manifest parse time.
+      let qualityPopulated = false;
+      hlsInstance.on(Hls.Events.LEVEL_LOADED, (_evt, _data) => {
+        if (qualityPopulated) return; // guard: only populate once
+        qualityPopulated = true;
+        const levels = hlsInstance.levels;
+        qualitySelector.innerHTML = '<option value="-1">Auto</option>';
+        if (levels && levels.length > 1) {
+          levels.forEach((level, index) => {
+            const option = document.createElement("option");
+            option.value = index;
+            option.textContent = level.height ? `${level.height}p` : `Level ${index}`;
+            qualitySelector.appendChild(option);
+          });
+          qualitySelector.style.display = "";
+          qualitySelector.addEventListener("change", (e) => {
+            hlsInstance.currentLevel = parseInt(e.target.value, 10);
+          });
+        }
+      });
+
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      hlsInstance.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) showToast(`HLS error: ${data.type}`);
+      });
+    } else {
+      // Fallback: native playback for mp4 or browsers with native HLS support
+      video.src = src;
+      video.play().catch(() => {});
+    }
+  }
+
+  // Dynamically inject hls.js only once, then initialise
+  if (!document.getElementById("hlsjs-script")) {
+    const script = document.createElement("script");
+    script.id  = "hlsjs-script";
+    script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
+    script.onload = initVideo;
+    script.onerror = () => {
+      showToast("Could not load HLS.js — falling back to native playback.");
+      video.src = src;
+      video.play().catch(() => {});
+    };
+    document.body.appendChild(script);
+  } else {
+    // Script already loaded from a previous player session
+    initVideo();
+  }
+
+  // ── Behaviour ──────────────────────────────────────────────────────────────
   function closePlayer() {
     video.pause();
     video.src = "";
+    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     overlay.remove();
+    document.removeEventListener("keydown", onKeyDown);
   }
 
-  closeBtn.addEventListener("click", closePlayer);
-
-  // Click outside the video area also closes
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closePlayer();
+  pipBtn.addEventListener("click", () => {
+    if (document.pictureInPictureEnabled && !video.disablePictureInPicture) {
+      video.requestPictureInPicture().catch(err => showToast(`PiP failed: ${err.message}`));
+    } else {
+      showToast("Picture-in-Picture is not supported in this context.");
+    }
   });
 
-  // Escape key closes
+  // Prev / Next navigation — resolve the adjacent episode's stream URL and reopen the player.
+  async function navigateEpisode(direction) {
+    if (!context) return;
+    const { showId, allEpisodes, currentEp, mode } = context;
+    const idx = allEpisodes.indexOf(currentEp);
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= allEpisodes.length) {
+      showToast(direction < 0 ? "Already at the first episode." : "Already at the last episode.");
+      return;
+    }
+    const targetEp = allEpisodes[nextIdx];
+    closePlayer();
+    try {
+      const qualities = await invoke("get_stream_url", { showId, episode: targetEp, mode });
+      const chosen = await pickQuality(qualities);
+      if (!chosen) return;
+      const newCtx = { showId, allEpisodes, currentEp: targetEp, mode };
+      openVideoPlayer(chosen.url, `${title.split(" — ")[0]} — Episode ${targetEp}`, chosen.isHls ?? false, newCtx);
+    } catch (err) {
+      showToast(`Could not load episode ${targetEp}: ${err}`);
+    }
+  }
+
+  if (prevBtn) prevBtn.addEventListener("click", () => navigateEpisode(-1));
+  if (nextBtn) nextBtn.addEventListener("click", () => navigateEpisode(+1));
+
+  dlBtn.addEventListener("click", async () => {
+    dlBtn.disabled = true;
+    const oldHtml = dlBtn.innerHTML;
+    dlBtn.textContent = "Started";
+    try {
+      const parts = title.split(" — ");
+      const safeTitle = (parts[0] || "Unknown").replace(/[/\\:*?"<>|]/g, "_");
+      const epRaw = parts[1] ? parts[1].replace("Episode ", "") : "Unknown";
+      const savePath = `~/Videos/AniLab/${safeTitle}/Episode_${epRaw}_auto.mp4`;
+      
+      const dlId = await invoke("record_download", {
+        animeId: context ? context.showId : null,
+        title: safeTitle,
+        episode: epRaw,
+        savePath
+      });
+      
+      if (typeof window.incrementActiveDownloads === "function") {
+        window.incrementActiveDownloads(safeTitle);
+      }
+      
+      invoke("download_episode", { url: src, outputPath: savePath, downloadId: dlId }).catch(err => {
+        showToast(`Download task error: ${err}`);
+      });
+      showToast(`Download started in background.`);
+    } catch (err) {
+      showToast(`Download init error: ${err}`);
+    } finally {
+      setTimeout(() => {
+        dlBtn.disabled = false;
+        dlBtn.innerHTML = oldHtml;
+      }, 2000);
+    }
+  });
+
+  closeBtn.addEventListener("click", closePlayer);
+  // Disabled background click-to-close to prevent native <select> menus
+  // from accidentally dismissing the player when clicked outside.
+
   function onKeyDown(e) {
-    if (e.key === "Escape") { closePlayer(); document.removeEventListener("keydown", onKeyDown); }
+    if (e.key === "Escape") closePlayer();
+    if (e.key === "ArrowLeft")  navigateEpisode(-1);
+    if (e.key === "ArrowRight") navigateEpisode(+1);
   }
   document.addEventListener("keydown", onKeyDown);
+
+  // Record history
+  if (context) {
+    recordHistory(context.showId, title.split(" — ")[0], context.currentEp.toString(), "stream").catch(()=>0);
+  } else {
+    recordHistory(null, title, "", "stream").catch(()=>0);
+  }
 
   overlay.append(bar, video);
   document.body.appendChild(overlay);
 }
 
+
+// ── Quality picker modal ──────────────────────────────────────────────────────
+
+/**
+ * Show a coffee-themed quality-selection modal if there are multiple options.
+ * Resolves with the chosen { resolution, url } object, or null if dismissed.
+ * If only one quality exists, resolves immediately without showing UI.
+ */
+function pickQuality(qualities) {
+  return new Promise(resolve => {
+    if (!qualities || qualities.length === 0) { resolve(null); return; }
+    // Single quality (usually adaptive HLS) — skip modal, mark as HLS so badge appears
+    if (qualities.length === 1) {
+      resolve({ ...qualities[0], isHls: qualities[0].url?.includes(".m3u8") });
+      return;
+    }
+
+    const backdrop = document.createElement("div");
+    backdrop.style.cssText = [
+      "position:fixed", "inset:0", "z-index:10000",
+      "background:rgba(44,26,14,0.6)",
+      "backdrop-filter:blur(4px)",
+      "display:flex", "align-items:center", "justify-content:center",
+    ].join(";");
+
+    const modal = document.createElement("div");
+    modal.style.cssText = [
+      "background:#E8D5B0",
+      "border-radius:14px",
+      "padding:28px 32px",
+      "min-width:280px",
+      "max-width:380px",
+      "box-shadow:0 20px 60px rgba(44,26,14,0.45)",
+      "font-family:Inter,sans-serif",
+      "color:#2C1A0E",
+    ].join(";");
+
+    const heading = document.createElement("p");
+    heading.textContent = "Select Quality";
+    heading.style.cssText = "font-size:1rem;font-weight:700;margin:0 0 6px;";
+
+    const sub = document.createElement("p");
+    sub.textContent = "Choose your preferred stream quality to continue.";
+    sub.style.cssText = "font-size:0.8rem;opacity:0.65;margin:0 0 18px;";
+
+    const list = document.createElement("div");
+    list.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+
+    function cleanup() { backdrop.remove(); }
+
+    for (const q of qualities) {
+      const btn = document.createElement("button");
+      btn.textContent = q.resolution || "Auto";
+      btn.style.cssText = [
+        "background:#2C1A0E", "color:#E8D5B0",
+        "border:none", "border-radius:8px",
+        "padding:10px 16px", "cursor:pointer",
+        "font-size:0.9rem", "font-weight:600",
+        "font-family:Inter,sans-serif",
+        "text-align:left", "transition:opacity 0.15s",
+      ].join(";");
+      btn.onmouseenter = () => btn.style.opacity = "0.78";
+      btn.onmouseleave = () => btn.style.opacity = "1";
+      btn.addEventListener("click", () => { cleanup(); resolve(q); });
+      list.appendChild(btn);
+    }
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.style.cssText = [
+      "background:transparent", "color:#2C1A0E",
+      "border:1.5px solid rgba(44,26,14,0.3)",
+      "border-radius:8px", "padding:8px 16px",
+      "cursor:pointer", "font-size:0.85rem",
+      "font-family:Inter,sans-serif", "margin-top:10px",
+      "width:100%", "transition:background 0.15s",
+    ].join(";");
+    cancelBtn.onmouseenter = () => cancelBtn.style.background = "rgba(44,26,14,0.08)";
+    cancelBtn.onmouseleave = () => cancelBtn.style.background = "transparent";
+    cancelBtn.addEventListener("click", () => { cleanup(); resolve(null); });
+
+    modal.append(heading, sub, list, cancelBtn);
+    backdrop.appendChild(modal);
+    backdrop.addEventListener("click", e => { if (e.target === backdrop) { cleanup(); resolve(null); } });
+    document.body.appendChild(backdrop);
+  });
+}
 
 function statusClass(status) {
   if (!status) return "status-default";
@@ -283,7 +566,6 @@ async function renderLibrary() {
   for (const row of rows) {
     const key = row.anime_id != null ? `id:${row.anime_id}` : `folder:${row.folder_path}`;
     if (!groups.has(key)) {
-      // For folder-grouped entries, synthesise a display title from the folder name
       const meta = { ...row };
       if (row.anime_id == null) {
         meta.title = row.folder_path
@@ -299,7 +581,6 @@ async function renderLibrary() {
 
   const shows = [...groups.values()];
 
-  // Keep the library ID set in sync so search buttons reflect current state
   _libraryAnimeIds = new Set(
     rows.filter(r => r.anime_id != null).map(r => r.anime_id)
   );
@@ -311,8 +592,42 @@ async function renderLibrary() {
     return;
   }
 
-  for (const { meta, episodes } of shows) {
-    grid.appendChild(buildLibraryCard(meta, episodes));
+  // Split into local (has episode files) vs online-only (added from search, no files)
+  const localShows  = shows.filter(({ episodes }) => episodes.length > 0);
+  const onlineShows = shows.filter(({ episodes }) => episodes.length === 0);
+
+  function makeSectionHeader(text, count) {
+    const h = document.createElement("div");
+    h.className = "library-section-header";
+    h.style.cssText = [
+      "width:100%", "grid-column:1/-1",
+      "display:flex", "align-items:center", "gap:10px",
+      "padding:6px 0 4px",
+      "border-bottom:1.5px solid rgba(255,255,255,0.07)",
+      "margin-bottom:4px",
+    ].join(";");
+    const label = document.createElement("span");
+    label.style.cssText = "font-size:0.78rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);";
+    label.textContent = text;
+    const badge = document.createElement("span");
+    badge.style.cssText = "font-size:0.72rem;background:rgba(255,255,255,0.07);color:var(--text-muted);border-radius:10px;padding:1px 8px;";
+    badge.textContent = count;
+    h.append(label, badge);
+    return h;
+  }
+
+  if (localShows.length > 0) {
+    grid.appendChild(makeSectionHeader("Local Storage", localShows.length));
+    for (const { meta, episodes } of localShows) {
+      grid.appendChild(buildLibraryCard(meta, episodes));
+    }
+  }
+
+  if (onlineShows.length > 0) {
+    grid.appendChild(makeSectionHeader("Online Tracking", onlineShows.length));
+    for (const { meta, episodes } of onlineShows) {
+      grid.appendChild(buildLibraryCard(meta, episodes));
+    }
   }
 }
 
@@ -431,6 +746,7 @@ function _renderDetailContent(anime, episodes) {
         e.stopPropagation();
         try {
           await invoke("play_episode", { filePath: ep.episode_file });
+          recordHistory(anime.anime_id, anime.title, ep.episode_number?.toString() || "", "local mpv").catch(()=>0);
         } catch (err) {
           showToast(`Could not open mpv: ${err}`);
         }
@@ -490,88 +806,157 @@ function _renderDetailContent(anime, episodes) {
           streamContent.innerHTML = `<p class="stream-status">Not found on AllAnime.</p>`;
           return;
         }
-        const match = results[0];
-        const episodes = await invoke("get_episodes", { showId: match.id, mode: "sub" });
+
+        // ── Show result picker if there are multiple matches ———————————
         streamContent.innerHTML = "";
 
-        if (!episodes || episodes.length === 0) {
-          streamContent.innerHTML = `<p class="stream-status">No episodes available.</p>`;
-          return;
-        }
+        const pickerNote = document.createElement("p");
+        pickerNote.className = "stream-match-meta";
+        pickerNote.textContent = `${results.length} result${results.length === 1 ? "" : "s"} found — select the correct one:`;
+        streamContent.appendChild(pickerNote);
 
+        const pickerList = document.createElement("ul");
+        pickerList.className = "episode-list";
+        pickerList.style.marginBottom = "12px";
+        streamContent.appendChild(pickerList);
 
-        const matchMeta = document.createElement("p");
-        matchMeta.className = "stream-match-meta";
-        matchMeta.textContent = `Found: ${match.name} · ${episodes.length} episodes (sub: ${match.episodes_sub}, dub: ${match.episodes_dub})`;
-        streamContent.appendChild(matchMeta);
+        const epContainer = document.createElement("div");
+        streamContent.appendChild(epContainer);
 
-        const ul = document.createElement("ul");
-        ul.className = "episode-list";
-
-        for (const ep of episodes) {
-          // ep is a plain string like "1", "2", "2.5"
+        for (const result of results) {
           const li = document.createElement("li");
           li.className = "episode-item";
-          li.style.flexWrap = "wrap";
+          li.style.cssText = "cursor:pointer;flex-wrap:wrap;gap:6px;";
 
-          const num = document.createElement("span");
-          num.className = "episode-num";
-          num.textContent = `#${ep}`;
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "episode-file";
+          nameSpan.style.fontWeight = "600";
+          nameSpan.textContent = result.name;
 
-          const name = document.createElement("span");
-          name.className = "episode-file";
-          name.textContent = `Episode ${ep}`;
+          const epSpan = document.createElement("span");
+          epSpan.className = "episode-num";
+          epSpan.textContent = `sub:${result.episodes_sub} dub:${result.episodes_dub}`;
 
-          // ── Stream button ────────────────────────────────────────────────
-          const streamBtn = document.createElement("button");
-          streamBtn.className = "play-btn";
-          streamBtn.title = "Stream in-app";
-          streamBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
-          streamBtn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            streamBtn.disabled = true;
-            streamBtn.title = "Resolving stream…";
+          const selectBtn = document.createElement("button");
+          selectBtn.className = "play-btn play-btn--text";
+          selectBtn.textContent = "Select";
+          selectBtn.title = "Load episodes for this title";
+
+          selectBtn.addEventListener("click", async () => {
+            // Mark selected row visually
+            pickerList.querySelectorAll(".episode-item").forEach(el => el.style.background = "");
+            li.style.background = "rgba(var(--accent-rgb, 180,120,60),0.12)";
+
+            epContainer.innerHTML = `<p class="stream-status">Loading episodes…</p>`;
             try {
-              const streamUrl = await invoke("get_stream_url", { showId: match.id, episode: ep, mode: "sub" });
-              openVideoPlayer(streamUrl, `${match.name} — Episode ${ep}`);
+              const epList = await invoke("get_episodes", { showId: result.id, mode: "sub" });
+              epContainer.innerHTML = "";
+
+              if (!epList || epList.length === 0) {
+                epContainer.innerHTML = `<p class="stream-status">No episodes available.</p>`;
+                return;
+              }
+
+              const matchMeta = document.createElement("p");
+              matchMeta.className = "stream-match-meta";
+              matchMeta.textContent = `${result.name} · ${epList.length} episodes`;
+              epContainer.appendChild(matchMeta);
+
+              const ul = document.createElement("ul");
+              ul.className = "episode-list";
+
+              for (const ep of epList) {
+                const li2 = document.createElement("li");
+                li2.className = "episode-item";
+                li2.style.flexWrap = "wrap";
+
+                const num = document.createElement("span");
+                num.className = "episode-num";
+                num.textContent = `#${ep}`;
+
+                const label = document.createElement("span");
+                label.className = "episode-file";
+                label.textContent = `Episode ${ep}`;
+
+                // ── Stream button ————————————————————————————
+                const streamBtn = document.createElement("button");
+                streamBtn.className = "play-btn";
+                streamBtn.title = "Stream in-app";
+                streamBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+                streamBtn.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  streamBtn.disabled = true;
+                  try {
+                    const qualities = await invoke("get_stream_url", { showId: result.id, episode: ep, mode: "sub" });
+                    const chosen = await pickQuality(qualities);
+                    if (!chosen) return;
+                    const ctx = { showId: result.id, allEpisodes: epList, currentEp: ep, mode: "sub" };
+                    openVideoPlayer(chosen.url, `${result.name} — Episode ${ep}`, chosen.isHls ?? false, ctx);
+                  } catch (err) {
+                    showToast(`Stream error: ${err}`);
+                  } finally {
+                    streamBtn.disabled = false;
+                  }
+                });
+
+                // ── Download button —————————————————————————
+                const dlBtn = document.createElement("button");
+                dlBtn.className = "play-btn dl-btn";
+                dlBtn.title = "Download episode";
+                dlBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+                dlBtn.addEventListener("click", async (e) => {
+                  e.stopPropagation();
+                  dlBtn.disabled = true;
+                  dlBtn.title = "Started";
+                  try {
+                    const qualities = await invoke("get_stream_url", { showId: result.id, episode: ep, mode: "sub" });
+                    const chosen = await pickQuality(qualities);
+                    if (!chosen) {
+                      dlBtn.disabled = false;
+                      dlBtn.title = "Download episode";
+                      return;
+                    }
+                    const safeTitle = (result.name || "Unknown").replace(/[/\\:*?"<>|]/g, "_");
+                    const safeRes   = (chosen.resolution || "auto").replace(/\s+/g, "_");
+                    const savePath  = `~/Videos/AniLab/${safeTitle}/Episode_${ep}_${safeRes}.mp4`;
+                    
+                    const dlId = await invoke("record_download", {
+                      animeId: result.id,
+                      title: safeTitle,
+                      episode: ep.toString(),
+                      savePath
+                    });
+                    
+                    if (typeof window.incrementActiveDownloads === "function") {
+                      window.incrementActiveDownloads(safeTitle);
+                    }
+                    
+                    invoke("download_episode", { url: chosen.url, outputPath: savePath, downloadId: dlId });
+                    showToast(`Background download started for Episode ${ep}.`);
+                  } catch (err) {
+                    showToast(`Download init error: ${err}`);
+                    dlBtn.disabled = false;
+                  }
+                });
+
+                li2.append(num, label, streamBtn, dlBtn);
+                ul.appendChild(li2);
+              }
+              epContainer.appendChild(ul);
             } catch (err) {
-              showToast(`Stream error: ${err}`);
-            } finally {
-              streamBtn.disabled = false;
-              streamBtn.title = "Stream in-app";
+              epContainer.innerHTML = `<p class="stream-status">Error loading episodes: ${err}</p>`;
             }
           });
 
-          // ── Download button ──────────────────────────────────────────────
-          const dlBtn = document.createElement("button");
-          dlBtn.className = "play-btn dl-btn";
-          dlBtn.title = "Download with yt-dlp";
-          dlBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-          dlBtn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            dlBtn.disabled = true;
-            dlBtn.title = "Resolving stream…";
-            try {
-              const m3u8Url = await invoke("get_stream_url", { showId: match.id, episode: ep, mode: "sub" });
-              const safeTitle = (anime.title || "Unknown").replace(/[/\\:*?"<>|]/g, "_");
-              const savePath = `~/Videos/AniLab/${safeTitle}/Episode_${ep}.mp4`;
-              const resolvedPath = await invoke("download_episode", {
-                url: m3u8Url,
-                outputPath: savePath,
-              });
-              showToast(`Downloading to ${resolvedPath}`, 4000);
-            } catch (err) {
-              showToast(`Download error: ${err}`);
-            } finally {
-              dlBtn.disabled = false;
-              dlBtn.title = "Download with yt-dlp";
-            }
-          });
-
-          li.append(num, name, streamBtn, dlBtn);
-          ul.appendChild(li);
+          li.append(nameSpan, epSpan, selectBtn);
+          pickerList.appendChild(li);
         }
-        streamContent.appendChild(ul);
+
+        // Auto-select if only one result
+        if (results.length === 1) {
+          pickerList.querySelector(".play-btn")?.click();
+        }
+
       } catch (err) {
         streamContent.innerHTML = `<p class="stream-status">Error: ${err}</p>`;
       }
@@ -640,6 +1025,8 @@ function initNav() {
   function switchView(viewId) {
     navBtns.forEach(b => b.classList.toggle("active", b.dataset.view === viewId));
     views.forEach(v => v.classList.toggle("active", v.id === `view-${viewId}`));
+    if (viewId === "history") renderHistory();
+    if (viewId === "downloads") renderDownloads();
   }
 
   navBtns.forEach(btn => {
@@ -650,7 +1037,221 @@ function initNav() {
   document.getElementById("scan-btn").addEventListener("click", () => switchView("settings"));
 }
 
+// ── Unified History & Downloads ───────────────────────────────────────────────
+
+async function recordHistory(animeId, title, episode, source) {
+  try {
+    await invoke("record_history", {
+      animeId: animeId || null,
+      title: title || "Unknown Title",
+      episode: episode || "",
+      source: source || "stream",
+    });
+  } catch (err) {
+    console.error("Failed to record history:", err);
+  }
+}
+
+async function renderHistory() {
+  const list = document.getElementById("history-list");
+  if (!list) return;
+
+  try {
+    const history = await invoke("get_history");
+    const empty = document.getElementById("history-empty");
+    if (!history || history.length === 0) {
+      if (empty) empty.style.display = "flex";
+      Array.from(list.children).forEach(c => { if (c !== empty) c.remove(); });
+      return;
+    }
+    if (empty) empty.style.display = "none";
+
+    Array.from(list.children).forEach(c => { if (c !== empty) c.remove(); });
+
+    for (const row of history) {
+      const item = document.createElement("div");
+      item.className = "episode-item";
+      let d = new Date(row.watched_at + 'Z');
+      if (isNaN(d)) d = new Date(row.watched_at); // fallback
+      item.innerHTML = `
+        <img src="${row.cover_image || ''}" class="card-cover" style="width: 44px; height: 60px; object-fit: cover; border-radius: 6px; margin-right: 12px; display: ${row.cover_image ? 'block' : 'none'};background:var(--border);">
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; overflow: hidden;">
+          <span style="font-weight: 600; color: var(--text); white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">${row.title}</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted); opacity: 0.85;">
+            Episode ${row.episode} • <span class="status-badge" style="background:#d4bc95;color:var(--text);font-size:0.6rem;padding:0px 6px;">${row.source}</span>
+          </span>
+        </div>
+        <span style="font-size: 0.75rem; color: var(--text-muted); align-self: flex-start; padding-top: 4px;">
+          ${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+        </span>
+      `;
+      list.appendChild(item);
+    }
+  } catch (err) {
+    console.error("renderHistory error:", err);
+  }
+}
+
+async function renderDownloads() {
+  const list = document.getElementById("downloads-list");
+  if (!list) return;
+
+  try {
+    const dls = await invoke("get_downloads");
+    const empty = document.getElementById("downloads-empty");
+    if (!dls || dls.length === 0) {
+      if (empty) empty.style.display = "flex";
+      Array.from(list.children).forEach(c => { if (c !== empty) c.remove(); });
+      return;
+    }
+    if (empty) empty.style.display = "none";
+
+    Array.from(list.children).forEach(c => { if (c !== empty) c.remove(); });
+
+    for (const row of dls) {
+      const item = document.createElement("div");
+      item.className = "episode-item";
+      item.id = `dl-row-${row.id}`;
+      
+      let statusColor = "var(--text-muted)";
+      if (row.status === "completed") statusColor = "var(--accent)";
+      if (row.status === "downloading") statusColor = "var(--caramel-dark)";
+      if (row.status === "failed") statusColor = "#d63031";
+
+      item.innerHTML = `
+        <img src="${row.cover_image || ''}" class="card-cover" style="width: 44px; height: 60px; object-fit: cover; border-radius: 6px; margin-right: 12px; display: ${row.cover_image ? 'block' : 'none'};background:var(--border);">
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px; overflow: hidden;">
+          <span style="font-weight: 600; color: var(--text); white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">${row.title}</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Episode ${row.episode}</span>
+          <span style="font-size: 0.7rem; color: var(--text-muted); opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;">
+            ${row.save_path}
+          </span>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width: 80px;">
+          <span style="font-size: 0.75rem; color: ${statusColor}; font-weight: 700; text-transform: uppercase;">
+            ${row.status}
+          </span>
+          ${row.status === 'downloading' ? `
+          <div style="width:100%;height:4px;background:var(--border);border-radius:99px;overflow:hidden;">
+            <div id="dl-row-prog-${row.id}" style="width:${row.progress}%;height:100%;background:${statusColor};transition:width 0.3s;"></div>
+          </div>
+          ` : ''}
+        </div>
+      `;
+      list.appendChild(item);
+    }
+  } catch (err) {
+    console.error("renderDownloads error:", err);
+  }
+}
+
+let openDownloads = 0;
+
+window.incrementActiveDownloads = function(titleText) {
+  openDownloads++;
+  const bar = document.getElementById("global-download-bar");
+  document.getElementById("gdb-title").textContent = `Downloading ${titleText}...`;
+  document.getElementById("gdb-title").style.color = "var(--text)";
+  bar.classList.remove("hidden");
+};
+
+function initDownloads() {
+  const gdBar = document.getElementById("global-download-bar");
+  const gdTitle = document.getElementById("gdb-title");
+  const gdStatus = document.getElementById("gdb-status");
+  const gdProgress = document.getElementById("gdb-progress");
+  const gdClose = document.getElementById("gdb-close");
+
+  if (!gdBar) return;
+
+  gdClose.addEventListener("click", () => {
+    gdBar.classList.add("hidden");
+  });
+
+  listen("download-progress", (event) => {
+    const { id, progress } = event.payload;
+    if (gdBar.classList.contains("hidden") && openDownloads > 0) {
+      gdBar.classList.remove("hidden");
+    }
+    gdStatus.textContent = `${progress}%`;
+    gdProgress.style.width = `${progress}%`;
+
+    const rowProg = document.getElementById(`dl-row-prog-${id}`);
+    if (rowProg) rowProg.style.width = `${progress}%`;
+  });
+
+  listen("download-complete", (event) => {
+    const { id, status, path } = event.payload;
+    openDownloads--;
+    if (openDownloads < 0) openDownloads = 0;
+    
+    gdTitle.textContent = status === "completed" ? "Download Complete" : "Download Failed";
+    gdTitle.style.color = status === "completed" ? "var(--accent)" : "red";
+    gdStatus.textContent = status === "completed" ? "Done" : "Error";
+    gdProgress.style.width = status === "completed" ? "100%" : "0%";
+    
+    invoke("update_download_status", { id, status, progress: 100 }).catch(console.error);
+    
+    if (document.getElementById("view-downloads").classList.contains("active")) {
+      renderDownloads();
+    }
+  });
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
+
+// ── Detail panel drag-to-resize ──────────────────────────────────────────────
+
+function initPanelResize() {
+  const panel = document.getElementById("detail-panel");
+  if (!panel) return;
+
+  // Restore saved width from previous session
+  const saved = localStorage.getItem("anilab-panel-width");
+  if (saved) {
+    document.documentElement.style.setProperty("--detail-panel-w", saved + "px");
+  }
+
+  // Inject drag handle
+  const handle = document.createElement("div");
+  handle.className = "detail-panel-resize-handle";
+  handle.title = "Drag to resize panel";
+  panel.appendChild(handle);
+
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    handle.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    // Panel is on the right; dragging left increases width
+    const delta = startX - e.clientX;
+    const newW  = Math.max(340, Math.min(startW + delta, window.innerWidth * 0.85));
+    document.documentElement.style.setProperty("--detail-panel-w", newW + "px");
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    // Persist the chosen width
+    const w = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue("--detail-panel-w"));
+    if (!isNaN(w)) localStorage.setItem("anilab-panel-width", Math.round(w));
+  });
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   // Init DB
@@ -663,6 +1264,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   initNav();
   initSearch();
+  initPanelResize();
+  initDownloads();
 
   // Detail panel close
   document.getElementById("detail-close").addEventListener("click", closeDetail);

@@ -39,6 +39,27 @@ pub fn open_and_init() -> Result<Connection> {
             watched        INTEGER DEFAULT 0,
             UNIQUE(episode_file)
         );
+
+        CREATE TABLE IF NOT EXISTS history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            anime_id    TEXT,
+            title       TEXT,
+            episode     TEXT,
+            source      TEXT,
+            watched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS downloads (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            anime_id     TEXT,
+            title        TEXT,
+            episode      TEXT,
+            save_path    TEXT,
+            status       TEXT DEFAULT 'downloading',
+            progress     INTEGER DEFAULT 0,
+            started_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        );
         ",
     )?;
 
@@ -224,4 +245,116 @@ pub fn remove_from_library(anime_id: Option<i64>, folder_path: Option<String>) -
     }
 
     Ok(())
+}
+
+// ── Unified History & Tracking ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct HistoryRow {
+    pub id: i64,
+    pub title: Option<String>,
+    pub episode: Option<String>,
+    pub source: Option<String>,
+    pub watched_at: Option<String>,
+    pub cover_image: Option<String>,
+}
+
+#[tauri::command]
+pub fn record_history(anime_id: Option<String>, title: Option<String>, episode: Option<String>, source: Option<String>) -> Result<(), String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO history (anime_id, title, episode, source) VALUES (?1, ?2, ?3, ?4)",
+        params![anime_id, title, episode, source],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_history() -> Result<Vec<HistoryRow>, String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, title, episode, source, watched_at, NULL
+         FROM history
+         ORDER BY watched_at DESC
+         LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(HistoryRow {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            episode: row.get(2)?,
+            source: row.get(3)?,
+            watched_at: row.get(4)?,
+            cover_image: row.get(5)?,
+        })
+    }).unwrap().filter_map(Result::ok).collect();
+    Ok(rows)
+}
+
+// ── Downloads Tracking ────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DownloadRow {
+    pub id: i64,
+    pub title: Option<String>,
+    pub episode: Option<String>,
+    pub save_path: Option<String>,
+    pub status: Option<String>,
+    pub progress: Option<i64>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub cover_image: Option<String>,
+}
+
+#[tauri::command]
+pub fn record_download(anime_id: Option<String>, title: Option<String>, episode: Option<String>, save_path: Option<String>) -> Result<i64, String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO downloads (anime_id, title, episode, save_path) VALUES (?1, ?2, ?3, ?4)",
+        params![anime_id, title, episode, save_path],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn update_download_status(id: i64, status: String, progress: i64) -> Result<(), String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    if status == "completed" || status == "failed" {
+        conn.execute(
+            "UPDATE downloads SET status = ?1, progress = ?2, completed_at = CURRENT_TIMESTAMP WHERE id = ?3",
+            params![status, progress, id],
+        ).map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "UPDATE downloads SET status = ?1, progress = ?2 WHERE id = ?3",
+            params![status, progress, id],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_downloads() -> Result<Vec<DownloadRow>, String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, title, episode, save_path, status, progress, started_at, completed_at, NULL
+         FROM downloads
+         ORDER BY started_at DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(DownloadRow {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            episode: row.get(2)?,
+            save_path: row.get(3)?,
+            status: row.get(4)?,
+            progress: row.get(5)?,
+            started_at: row.get(6)?,
+            completed_at: row.get(7)?,
+            cover_image: row.get(8)?,
+        })
+    }).unwrap().filter_map(Result::ok).collect();
+    Ok(rows)
 }
