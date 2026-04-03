@@ -1,61 +1,76 @@
-# AniLab Linux
+<h1 align="center">AniLab Linux</h1>
 
-AniLab Linux is a high-performance anime desktop client for Linux, designed to provide a seamless streaming and downloading experience. This project is a dedicated clone of the AniLab Android application, specifically optimized for CachyOS and Arch-based distributions. 
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-Arch%20Linux-1793d1?style=for-the-badge&logo=arch-linux" alt="Platform: Arch Linux">
+  <img src="https://img.shields.io/badge/Language-Rust-ea5c0b?style=for-the-badge&logo=rust" alt="Language: Rust">
+  <img src="https://img.shields.io/badge/Framework-Tauri_v2-ffc131?style=for-the-badge&logo=tauri" alt="Framework: Tauri">
+  <img src="https://img.shields.io/badge/Status-Active_Development-brightgreen?style=for-the-badge" alt="Status: Active Development">
+</p>
 
-The project is currently in active development, with the goal of bringing the "pain-free" anime experience of the original app to power users on the Linux desktop using modern web and systems technologies.
+> [!IMPORTANT]
+> **AniLab Linux** is a high-performance desktop client dedicated to easily stream and download anime on Linux (Arch/Arch-based) machines. 
+> 
+> We aim to bring the "pain-free" anime experience of the original AniLab app to power users on the Linux desktop using modern web and systems technologies.
 
-## Features
+## 🚀 Purpose
 
-- **Efficient Search**: Rapid title searching integrated with the AllAnime API.
-- **Embedded Streaming**: Native high-quality streaming utilizing a custom-built HTML5 player, eliminating the need for external tools for basic playback.
-- **Integrated Downloads**: High-speed anime downloads handled via `yt-dlp` for reliable offline access.
-- **Library Management**: Automated progress tracking and local file scanning with AniList metadata integration.
-- **Modern Interface**: A responsive, dark-mode UI built for Linux, emphasizing speed and visual clarity.
+AniLab Linux eliminates the friction of discovering, streaming, and managing anime on the desktop. By integrating native backend processing with an elegant front-end, it provides top-tier anime streaming and downloading completely out of the box—no web browsers, third-party sites, or complicated external tools required. 
 
-## Technical Foundation
+## 🌟 Current Progress & Features
 
-- **Backend**: Rust and Tauri v2.
-- **Frontend**: Vanilla JavaScript and CSS, following modern design principles for a premium feel.
-- **Data Integrations**: AllAnime (Streaming/Search) and AniList (Metadata).
-- **Core Dependencies**: `reqwest`, `serde`, `tokio`, and `rusqlite`.
-- **System Dependencies**: `yt-dlp` for downloads and `mpv` for optional local playback.
+We've made significant strides in building a responsive, premium application. Our current functional progress includes:
 
-## Installation and Development
+- **Efficient Search:** Rapid title searching natively integrated with modern anime APIs.
+- **Embedded Streaming:** High-quality streaming out of the box using our custom-built HTML5 video player.
+- **Integrated Downloads:** High-speed anime payload delivery handled seamlessly via `yt-dlp` for reliable offline access.
+- **Library & Metadata:** Automated progress tracking and local file scanning with underlying AniList metadata syncing.
+- **Modern Interface:** A responsive, sleek dark-mode UI built from the ground up for the Linux desktop emphasizing speed, glassmorphism, and visual clarity.
+- **Stream Decoding:** Backend reverse engineering (XOR decoding) to reliably fetch the highest quality streams under the hood.
 
-### System Requirements (CachyOS / Arch Linux)
+## 🚧 Upcoming Features
 
-Ensure the necessary development tools and dependencies are installed on your system:
+We have an exciting roadmap mapped out to reach version 1.0 and beyond:
+
+- [ ] **Select Download Quality:** Let users pick their preferred resolution before downloading, from 360p up to pristine 1080p.
+- [ ] **Play Local Files in App:** A fully functional built-in media player to directly watch local downloaded video files natively within the app.
+- [ ] **Revamp UI:** Continuous polishing of the user interface to ensure maximum user engagement with dynamic interactions, hover states, and animations.
+- [ ] **Package for Other Distros:** Package the app as a Flatpak/AppImage/Snap to easily support more Linux distributions beyond just Arch.
+- [ ] **Watch History Synchronization:** Keep track of where you left off across streaming, local playback, and downloads.
+- [ ] **Advanced Filtering & Sorting:** Implement robust catalog organization to find exactly what you want to watch.
+
+## ⚙️ Installation & Development Setup
+
+### System Requirements (Arch Linux / CachyOS)
+
+To build and run AniLab Linux, ensure the necessary system dependencies and build libraries are installed. Open your terminal and verify you have them:
 
 ```bash
 sudo pacman -S base-devel curl wget openssl rustup yt-dlp mpv
 ```
 
-### Development Setup
+*(Note: We rely on `yt-dlp` for robust download capabilities and backend media resolution, while `mpv` acts as a fallback or integrated video layer).*
 
-1. Clone the repository:
+### Getting Started
+
+1. **Clone the repository:**
    ```bash
    git clone https://github.com/callmejojoe/anilab-linux.git
    cd anilab-linux
    ```
 
-2. Install dependencies and start the development environment:
+2. **Install Node.js dependencies:**
    ```bash
-   # From the root directory
+   # Make sure you are in the project root containing package.json
    npm install
+   ```
+
+3. **Start the development server:**
+   ```bash
    npm run tauri dev
    ```
 
-## Roadmap and Development Status
-
-The following features and integrations are planned or currently being implemented:
-
-- [x] AllAnime GraphQL API Integration
-- [x] Stream URL XOR Decoding
-- [x] In-App HTML5 Video Player
-- [ ] Watch History Synchronization
-- [ ] Advanced Search Filtering and Sorting
-- [ ] MyAnimeList and AniList Account Integration
-
 ---
 
-Created for the Linux anime community.
+<p align="center">
+  <i>Created for the Linux anime community.</i>
+</p>
