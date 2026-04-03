@@ -15,36 +15,38 @@ fn find_ytdlp() -> Option<&'static str> {
         .find(|&p| p == "yt-dlp" || Path::new(p).exists())
 }
 
-/// Tauri command: download an HLS/online URL using yt-dlp.
-/// Saves to ~/Videos/AniLab/{title}/{ep_name}.%(ext)s (fire and forget).
+/// Tauri command: download any HLS/online URL using yt-dlp.
+/// `output_path` is the full destination path including filename template,
+/// e.g. "~/Videos/AniLab/Naruto/Episode_1.mp4".
 #[tauri::command]
-pub fn download_episode(url: String, title: String, ep_name: String) -> Result<String, String> {
+pub fn download_episode(url: String, output_path: String) -> Result<String, String> {
     let ytdlp = find_ytdlp()
         .ok_or_else(|| "yt-dlp not found. Install it with: pip install yt-dlp".to_string())?;
 
-    let home = dirs_next::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let output_dir = home.join("Videos").join("AniLab").join(&title);
+    // Expand ~ to the real home directory
+    let expanded = if output_path.starts_with("~/") {
+        let home = dirs_next::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        home.join(&output_path[2..]).to_string_lossy().to_string()
+    } else {
+        output_path.clone()
+    };
 
-    std::fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("Could not create output dir: {e}"))?;
+    // Ensure parent directory exists
+    if let Some(parent) = Path::new(&expanded).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create output dir: {e}"))?;
+    }
 
-    // Sanitise ep_name so it's safe as a filename
-    let safe_name: String = ep_name
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '.' || c == ' ' { c } else { '_' })
-        .collect();
-
-    let output_template = output_dir.join(format!("{}.%(ext)s", safe_name));
-    let output_path_str = output_template.to_string_lossy().to_string();
+    eprintln!("[AniLab] download_episode → yt-dlp -o {} {}", expanded, url);
 
     Command::new(ytdlp)
-        .args(["-o", &output_path_str, &url])
+        .args(["-o", &expanded, &url])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("Failed to launch yt-dlp: {e}"))?;
 
-    Ok(output_dir.to_string_lossy().to_string())
+    Ok(expanded)
 }

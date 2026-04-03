@@ -64,6 +64,86 @@ function showToast(msg, duration = 2800) {
   showToast._timer = setTimeout(() => toast.classList.add("hidden"), duration);
 }
 
+// ── In-app video player ───────────────────────────────────────────────────────
+
+function openVideoPlayer(src, title = "") {
+  // Remove any existing player first
+  document.getElementById("anilab-player-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "anilab-player-overlay";
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "z-index:9999",
+    "background:rgba(0,0,0,0.93)",
+    "display:flex", "flex-direction:column",
+    "justify-content:center", "align-items:center",
+    "gap:14px",
+    "backdrop-filter:blur(6px)",
+    "-webkit-backdrop-filter:blur(6px)",
+  ].join(";");
+
+  // ── Title bar ──────────────────────────────────────────────────────────────
+  const bar = document.createElement("div");
+  bar.style.cssText = [
+    "width:80%", "display:flex", "justify-content:space-between",
+    "align-items:center", "gap:12px",
+  ].join(";");
+
+  const label = document.createElement("span");
+  label.textContent = title;
+  label.style.cssText = "color:#fff;font-size:0.95rem;font-weight:600;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 44px);";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.title = "Close player";
+  closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  closeBtn.style.cssText = [
+    "background:rgba(255,255,255,0.1)", "border:none", "border-radius:8px",
+    "color:#fff", "width:36px", "height:36px", "cursor:pointer",
+    "display:flex", "align-items:center", "justify-content:center",
+    "flex-shrink:0", "transition:background 0.15s",
+  ].join(";");
+  closeBtn.onmouseenter = () => closeBtn.style.background = "rgba(255,255,255,0.22)";
+  closeBtn.onmouseleave = () => closeBtn.style.background = "rgba(255,255,255,0.1)";
+
+  bar.append(label, closeBtn);
+
+  // ── Video element ──────────────────────────────────────────────────────────
+  const video = document.createElement("video");
+  video.src = src;
+  video.controls = true;
+  video.autoplay = true;
+  video.style.cssText = [
+    "width:80%", "max-height:80vh",
+    "border-radius:12px",
+    "box-shadow:0 20px 60px rgba(0,0,0,0.7)",
+    "background:#000",
+  ].join(";");
+
+  // ── Close behaviour ────────────────────────────────────────────────────────
+  function closePlayer() {
+    video.pause();
+    video.src = "";
+    overlay.remove();
+  }
+
+  closeBtn.addEventListener("click", closePlayer);
+
+  // Click outside the video area also closes
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closePlayer();
+  });
+
+  // Escape key closes
+  function onKeyDown(e) {
+    if (e.key === "Escape") { closePlayer(); document.removeEventListener("keydown", onKeyDown); }
+  }
+  document.addEventListener("keydown", onKeyDown);
+
+  overlay.append(bar, video);
+  document.body.appendChild(overlay);
+}
+
+
 function statusClass(status) {
   if (!status) return "status-default";
   if (status === "FINISHED")  return "status-FINISHED";
@@ -403,15 +483,15 @@ function _renderDetailContent(anime, episodes) {
       if (loaded) return;
       loaded = true;
 
-      streamContent.innerHTML = `<p class="stream-status">Searching Aniwatch…</p>`;
+      streamContent.innerHTML = `<p class="stream-status">Searching AllAnime…</p>`;
       try {
         const results = await invoke("search_online", { query: anime.title });
         if (!results || results.length === 0) {
-          streamContent.innerHTML = `<p class="stream-status">Not found on Aniwatch.</p>`;
+          streamContent.innerHTML = `<p class="stream-status">Not found on AllAnime.</p>`;
           return;
         }
         const match = results[0];
-        const episodes = await invoke("get_episodes", { idanime: match.idanime });
+        const episodes = await invoke("get_episodes", { showId: match.id, mode: "sub" });
         streamContent.innerHTML = "";
 
         if (!episodes || episodes.length === 0) {
@@ -419,83 +499,46 @@ function _renderDetailContent(anime, episodes) {
           return;
         }
 
-        // Dub/sub toggle
-        const toggleRow = document.createElement("div");
-        toggleRow.className = "stream-toggle-row";
-        let preferDub = false;
-        const subBtn  = document.createElement("button");
-        subBtn.textContent  = "Sub";
-        subBtn.className    = "stream-track-btn active";
-        const dubBtn  = document.createElement("button");
-        dubBtn.textContent  = "Dub";
-        dubBtn.className    = "stream-track-btn";
-        subBtn.addEventListener("click", () => { preferDub = false; subBtn.classList.add("active"); dubBtn.classList.remove("active"); });
-        dubBtn.addEventListener("click", () => { preferDub = true;  dubBtn.classList.add("active"); subBtn.classList.remove("active"); });
-        toggleRow.append(subBtn, dubBtn);
-        streamContent.appendChild(toggleRow);
 
         const matchMeta = document.createElement("p");
         matchMeta.className = "stream-match-meta";
-        matchMeta.textContent = `Match: ${match.name} (${episodes.length} episodes)`;
+        matchMeta.textContent = `Found: ${match.name} · ${episodes.length} episodes (sub: ${match.episodes_sub}, dub: ${match.episodes_dub})`;
         streamContent.appendChild(matchMeta);
 
         const ul = document.createElement("ul");
         ul.className = "episode-list";
 
         for (const ep of episodes) {
+          // ep is a plain string like "1", "2", "2.5"
           const li = document.createElement("li");
           li.className = "episode-item";
           li.style.flexWrap = "wrap";
 
           const num = document.createElement("span");
           num.className = "episode-num";
-          num.textContent = `#${ep.order}`;
+          num.textContent = `#${ep}`;
 
           const name = document.createElement("span");
           name.className = "episode-file";
-          name.textContent = ep.name || `Episode ${ep.order}`;
-
-          // ── Quality picker (shared between stream + download) ────────────
-          function buildQualityPicker(sources, onPick) {
-            // Remove any stale picker in this li
-            li.querySelectorAll(".quality-picker").forEach(p => p.remove());
-            if (sources.length === 1) { onPick(sources[0]); return; }
-            const picker = document.createElement("div");
-            picker.className = "quality-picker";
-            sources.forEach(src => {
-              const btn = document.createElement("button");
-              btn.className = "quality-option";
-              btn.textContent = src.label || src.kind || "Play";
-              btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                picker.remove();
-                onPick(src);
-              });
-              picker.appendChild(btn);
-            });
-            li.appendChild(picker);
-            // Close on outside click
-            setTimeout(() => document.addEventListener("click", () => picker.remove(), { once: true }), 50);
-          }
+          name.textContent = `Episode ${ep}`;
 
           // ── Stream button ────────────────────────────────────────────────
           const streamBtn = document.createElement("button");
           streamBtn.className = "play-btn";
-          streamBtn.title = "Stream in mpv";
+          streamBtn.title = "Stream in-app";
           streamBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
           streamBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
             streamBtn.disabled = true;
+            streamBtn.title = "Resolving stream…";
             try {
-              const sources = await invoke("get_stream_url", { epId: ep.ep_id, preferDub });
-              buildQualityPicker(sources, async (src) => {
-                await invoke("stream_episode", { url: src.url });
-                showToast(`Streaming ${src.label} in mpv…`);
-              });
+              const streamUrl = await invoke("get_stream_url", { showId: match.id, episode: ep, mode: "sub" });
+              openVideoPlayer(streamUrl, `${match.name} — Episode ${ep}`);
             } catch (err) {
               showToast(`Stream error: ${err}`);
             } finally {
               streamBtn.disabled = false;
+              streamBtn.title = "Stream in-app";
             }
           });
 
@@ -507,21 +550,21 @@ function _renderDetailContent(anime, episodes) {
           dlBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
             dlBtn.disabled = true;
+            dlBtn.title = "Resolving stream…";
             try {
-              const sources = await invoke("get_stream_url", { epId: ep.ep_id, preferDub });
-              buildQualityPicker(sources, async (src) => {
-                const epLabel = ep.name || `Episode ${ep.order}`;
-                const dir = await invoke("download_episode", {
-                  url: src.url,
-                  title: anime.title || "Unknown",
-                  epName: epLabel,
-                });
-                showToast(`Downloading to ${dir}`, 4000);
+              const m3u8Url = await invoke("get_stream_url", { showId: match.id, episode: ep, mode: "sub" });
+              const safeTitle = (anime.title || "Unknown").replace(/[/\\:*?"<>|]/g, "_");
+              const savePath = `~/Videos/AniLab/${safeTitle}/Episode_${ep}.mp4`;
+              const resolvedPath = await invoke("download_episode", {
+                url: m3u8Url,
+                outputPath: savePath,
               });
+              showToast(`Downloading to ${resolvedPath}`, 4000);
             } catch (err) {
               showToast(`Download error: ${err}`);
             } finally {
               dlBtn.disabled = false;
+              dlBtn.title = "Download with yt-dlp";
             }
           });
 

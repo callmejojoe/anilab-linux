@@ -1,311 +1,337 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
-const BASE: &str = "https://aniwatch-api-v1-0.onrender.com";
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-// ── Percent-encode a path segment ────────────────────────────────────────────
+const API_BASE: &str = "https://api.allanime.day/api";
+const REFERER:  &str = "https://allmanga.to";
+const UA:       &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
 
-fn pct_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
-            | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    out
-}
-
-// ── Aniwatch API response shapes ──────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct SearchResponse {
-    #[serde(rename = "searchYour")]
-    search_your: Option<Vec<SearchItem>>,
-}
-
-#[derive(Deserialize)]
-struct SearchItem {
-    idanime: Option<String>,
-    name:    Option<String>,
-    img:     Option<String>,
-    totalep: Option<serde_json::Value>,
-    sub:     Option<serde_json::Value>,
-    dub:     Option<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-struct EpisodeResponse {
-    episodetown: Option<Vec<EpisodeItem>>,
-}
-
-#[derive(Deserialize)]
-struct EpisodeItem {
-    order: Option<serde_json::Value>,
-    name:  Option<String>,
-    #[serde(rename = "epId")]
-    ep_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ServerResponse {
-    sub: Option<Vec<ServerEntry>>,
-    dub: Option<Vec<ServerEntry>>,
-}
-
-#[derive(Deserialize)]
-struct ServerEntry {
-    #[serde(rename = "srcId")]
-    src_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SrcServerResponse {
-    #[serde(rename = "serverSrc")]
-    server_src: Option<Vec<SrcEntry>>,
-}
-
-#[derive(Deserialize)]
-struct SrcEntry {
-    rest: Option<Vec<RestEntry>>,
-}
-
-/// Capture all known fields; the API may return label/type/quality/file.
-#[derive(Deserialize, Debug)]
-struct RestEntry {
-    file:    Option<String>,
-    #[serde(rename = "type")]
-    kind:    Option<String>,
-    label:   Option<String>,
-    quality: Option<serde_json::Value>,
-}
+// Source name priority — tried in this order when resolving stream URLs.
+const SOURCE_PRIORITY: &[&str] = &["Default", "S-mp4", "Luf-Mp4"];
 
 // ── Public return types ───────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct OnlineAnime {
-    pub idanime: String,
-    pub name:    String,
-    pub img:     Option<String>,
-    pub totalep: Option<i64>,
-    pub sub:     Option<i64>,
-    pub dub:     Option<i64>,
+    pub id:           String,
+    pub name:         String,
+    pub episodes_sub: i64,
+    pub episodes_dub: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct OnlineEpisode {
-    pub order: i64,
-    pub name:  String,
-    pub ep_id: String,
+    pub episode: String,
 }
 
-/// A single quality/stream source returned by get_stream_url.
-#[derive(Serialize)]
-pub struct StreamSource {
-    pub url:     String,
-    pub label:   String,
-    pub kind:    String,
+// ── Internal deserialisation types ───────────────────────────────────────────
+
+#[derive(Deserialize, Debug)]
+struct ShowEdge {
+    #[serde(rename = "_id")]
+    id: String,
+    name: String,
+    #[serde(rename = "availableEpisodes")]
+    available_episodes: AvailableEpisodes,
+}
+
+#[derive(Deserialize, Debug)]
+struct AvailableEpisodes {
+    sub: i64,
+    dub: i64,
+}
+
+#[derive(Deserialize, Debug)]
+struct EpisodeDetail {
+    sub: Option<Vec<String>>,
+    dub: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SourceUrl {
+    #[serde(rename = "sourceUrl")]
+    source_url: String,
+    #[serde(rename = "sourceName")]
+    source_name: String,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Collect up to `limit` srcIds from a server entry list.
-fn collect_src_ids(entries: Option<&Vec<ServerEntry>>, limit: usize) -> Vec<String> {
-    entries
-        .map(|v| {
-            v.iter()
-                .filter_map(|e| e.src_id.clone())
-                .take(limit)
-                .collect()
-        })
-        .unwrap_or_default()
+/// Build the shared reqwest Client with AllAnime-required headers baked in.
+fn get_client() -> Client {
+    Client::builder()
+        .user_agent(UA)
+        .build()
+        .unwrap()
 }
 
-/// Infer a quality label from a URL path (e.g. "1080p" if "1080" appears).
-fn quality_from_url(url: &str) -> String {
-    for q in &["2160", "1080", "720", "480", "360"] {
-        if url.contains(q) {
-            return format!("{}p", q);
-        }
-    }
-    "HD".to_string()
+/// Decode an obfuscated AllAnime source URL.
+///
+/// The URL is hex-encoded with each byte XOR'd with 56. Strip the leading `--`
+/// prefix before passing here.
+fn decode_url(encoded: &str) -> String {
+    encoded
+        .as_bytes()
+        .chunks(2)
+        .filter_map(|c| std::str::from_utf8(c).ok())
+        .filter_map(|h| u8::from_str_radix(h, 16).ok())
+        .map(|b| (b ^ 56) as char)
+        .collect()
 }
+
+/// Send a GraphQL POST to the AllAnime API and return the parsed JSON body.
+async fn gql(client: &Client, query: &str, variables: Value) -> Result<Value, String> {
+    let payload = json!({ "query": query, "variables": variables });
+
+    eprintln!("[AniLab] GQL POST {}", API_BASE);
+
+    let resp = client
+        .post(API_BASE)
+        .header("Referer", REFERER)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP error: {e}"))?;
+
+    let status = resp.status();
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("JSON parse error: {e}"))?;
+
+    eprintln!("[AniLab] GQL status={}", status);
+
+    if !status.is_success() {
+        return Err(format!("API returned HTTP {status}: {body}"));
+    }
+
+    Ok(body)
+}
+
+/// Fetch the clock.json endpoint, parse the response, and return the
+/// direct video URL from `links[0].link` (falling back to `links[0].src`).
+async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<String, String> {
+    let final_path = decoded_path.replace("/clock", "/clock.json");
+    let clock_url = format!("https://allanime.day{}", final_path);
+
+    eprintln!("[AniLab] clock URL: {}", clock_url);
+
+    let resp = client
+        .get(&clock_url)
+        .header("Referer", REFERER)
+        .send()
+        .await
+        .map_err(|e| format!("clock HTTP error: {e}"))?;
+
+    let status = resp.status();
+    eprintln!("[AniLab] clock HTTP status: {}", status);
+
+    let raw = resp
+        .text()
+        .await
+        .map_err(|e| format!("clock read error: {e}"))?;
+
+    eprintln!("[AniLab] clock raw body ({} bytes): {}", raw.len(), raw);
+
+    let v: Value = match serde_json::from_str(&raw) {
+        Ok(v)  => v,
+        Err(e) => return Err(format!("clock JSON parse error: {e}\nBody: {raw}")),
+    };
+
+    // Pretty-print for terminal inspection.
+    println!("{:#?}", v);
+
+    // Extract the video URL: links[0].link  →  links[0].src  →  error.
+    if let Some(links) = v.get("links").and_then(|l| l.as_array()) {
+        if let Some(first) = links.first() {
+            if let Some(url) = first.get("link").and_then(|u| u.as_str()) {
+                eprintln!("[AniLab] resolved stream URL: {}", url);
+                return Ok(url.to_string());
+            }
+            if let Some(url) = first.get("src").and_then(|u| u.as_str()) {
+                eprintln!("[AniLab] resolved stream URL (src): {}", url);
+                return Ok(url.to_string());
+            }
+        }
+        return Err(format!("links array present but no 'link'/'src' field found: {v}"));
+    }
+
+    Err(format!("No 'links' array in clock response: {v}"))
+}
+
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
-/// Search Aniwatch for an anime by name (first result page).
+/// Search AllAnime for anime by name.
+///
+/// Returns up to 40 results with sub/dub episode counts.
 #[tauri::command]
 pub async fn search_online(query: String) -> Result<Vec<OnlineAnime>, String> {
-    let client = Client::new();
-    let url = format!("{}/api/search/{}/1", BASE, pct_encode(&query));
+    let client = get_client();
 
-    let resp: SearchResponse = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+    let gql_query = r#"
+        query($search:SearchInput $limit:Int $page:Int $translationType:VaildTranslationTypeEnumType $countryOrigin:VaildCountryOriginEnumType){
+            shows(search:$search limit:$limit page:$page translationType:$translationType countryOrigin:$countryOrigin){
+                edges{
+                    _id
+                    name
+                    availableEpisodes
+                }
+            }
+        }
+    "#;
 
-    let results = resp
-        .search_your
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|item| {
-            Some(OnlineAnime {
-                idanime: item.idanime?,
-                name:    item.name.unwrap_or_default(),
-                img:     item.img,
-                totalep: item.totalep.as_ref().and_then(|v| v.as_i64()),
-                sub:     item.sub.as_ref().and_then(|v| v.as_i64()),
-                dub:     item.dub.as_ref().and_then(|v| v.as_i64()),
-            })
+    let variables = json!({
+        "search": {
+            "allowAdult": false,
+            "query": query
+        },
+        "limit": 40,
+        "page": 1,
+        "translationType": "sub",
+        "countryOrigin": "ALL"
+    });
+
+    let body = gql(&client, gql_query, variables).await?;
+
+    let edges = body
+        .pointer("/data/shows/edges")
+        .and_then(|e| e.as_array())
+        .ok_or_else(|| format!("Unexpected response shape: {body}"))?;
+
+    let results = edges
+        .iter()
+        .filter_map(|edge| {
+            let id   = edge.get("_id")?.as_str()?.to_string();
+            let name = edge.get("name")?.as_str()?.to_string();
+            let eps  = edge.get("availableEpisodes")?;
+            let sub  = eps.get("sub").and_then(|v| v.as_i64()).unwrap_or(0);
+            let dub  = eps.get("dub").and_then(|v| v.as_i64()).unwrap_or(0);
+            Some(OnlineAnime { id, name, episodes_sub: sub, episodes_dub: dub })
         })
-        .collect();
+        .collect::<Vec<_>>();
 
+    eprintln!("[AniLab] search_online: {} results for '{}'", results.len(), query);
     Ok(results)
 }
 
-/// Return the episode list for an Aniwatch anime ID.
+/// Fetch the list of available episode numbers for a show.
+///
+/// Returns episode numbers as strings (e.g. `["1","2","2.5","3"]`) in the
+/// order the API provides them (usually ascending).
 #[tauri::command]
-pub async fn get_episodes(idanime: String) -> Result<Vec<OnlineEpisode>, String> {
-    let client = Client::new();
-    let url = format!("{}/api/episode/{}", BASE, idanime);
+pub async fn get_episodes(show_id: String, mode: String) -> Result<Vec<String>, String> {
+    let client = get_client();
 
-    let resp: EpisodeResponse = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+    let gql_query = r#"
+        query($showId:String!){
+            show(_id:$showId){
+                _id
+                availableEpisodesDetail
+            }
+        }
+    "#;
 
-    let episodes = resp
-        .episodetown
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|ep| {
-            Some(OnlineEpisode {
-                order: ep.order.as_ref().and_then(|v| v.as_i64()).unwrap_or(0),
-                name:  ep.name.unwrap_or_default(),
-                ep_id: ep.ep_id?,
-            })
-        })
-        .collect();
+    let variables = json!({ "showId": show_id });
+
+    let body = gql(&client, gql_query, variables).await?;
+
+    let detail = body
+        .pointer("/data/show/availableEpisodesDetail")
+        .ok_or_else(|| format!("Unexpected response shape: {body}"))?;
+
+    let episode_detail: EpisodeDetail = serde_json::from_value(detail.clone())
+        .map_err(|e| format!("Failed to parse availableEpisodesDetail: {e}"))?;
+
+    let episodes = match mode.to_lowercase().as_str() {
+        "dub" => episode_detail.dub.unwrap_or_default(),
+        _     => episode_detail.sub.unwrap_or_default(),
+    };
+
+    eprintln!(
+        "[AniLab] get_episodes: {} episodes ({}) for show '{}'",
+        episodes.len(), mode, show_id
+    );
 
     Ok(episodes)
 }
 
-/// Chain /api/server → try multiple src-server endpoint patterns.
-/// Logs raw JSON to stderr and retries with fallback srcIds and endpoint paths.
+/// Resolve a playable stream URL for a specific episode.
+///
+/// 1. GraphQL → get `sourceUrls` for the episode.
+/// 2. Walk SOURCE_PRIORITY to find a source whose `sourceUrl` starts with `--`.
+/// 3. Strip `--`, XOR-decode the hex to get a path like `/apivtwo/clock?id=…`.
+/// 4. GET `https://blog.allanime.day{path}` and log the full JSON response.
+/// 5. Return DUMMY until the JSON schema is confirmed and we wire up extraction.
 #[tauri::command]
-pub async fn get_stream_url(ep_id: String, prefer_dub: bool) -> Result<Vec<StreamSource>, String> {
-    let client = Client::new();
+pub async fn get_stream_url(
+    show_id: String,
+    episode: String,
+    mode:    String,
+) -> Result<String, String> {
+    let client = get_client();
 
-    // Step 1: get server list
-    let server_url = format!("{}/api/server/{}", BASE, ep_id);
-    let server_resp: ServerResponse = client
-        .get(&server_url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+    let gql_query = r#"
+        query($showId:String!,$translationType:VaildTranslationTypeEnumType!,$episodeString:String!){
+            episode(showId:$showId translationType:$translationType episodeString:$episodeString){
+                episodeString
+                sourceUrls
+            }
+        }
+    "#;
 
-    // Collect src ids in preferred order (up to 2 of each track)
-    let (primary, fallback) = if prefer_dub {
-        (collect_src_ids(server_resp.dub.as_ref(), 2),
-         collect_src_ids(server_resp.sub.as_ref(), 2))
-    } else {
-        (collect_src_ids(server_resp.sub.as_ref(), 2),
-         collect_src_ids(server_resp.dub.as_ref(), 2))
-    };
+    let translation_type = if mode.to_lowercase() == "dub" { "dub" } else { "sub" };
 
-    let src_ids: Vec<String> = primary.into_iter().chain(fallback).take(4).collect();
-    if src_ids.is_empty() {
-        return Err("No stream servers listed for this episode".to_string());
+    let variables = json!({
+        "showId":          show_id,
+        "translationType": translation_type,
+        "episodeString":   episode
+    });
+
+    let body = gql(&client, gql_query, variables).await?;
+
+    let source_urls_raw = body
+        .pointer("/data/episode/sourceUrls")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("No sourceUrls in response: {body}"))?;
+
+    // Deserialise — filter_map silently skips entries missing required fields.
+    let sources: Vec<SourceUrl> = source_urls_raw
+        .iter()
+        .filter_map(|v| serde_json::from_value(v.clone()).ok())
+        .collect();
+
+    eprintln!("[AniLab] get_stream_url: {} sources found", sources.len());
+    for s in &sources {
+        eprintln!("  name={:?}  url={:?}", s.source_name, &s.source_url[..s.source_url.len().min(80)]);
     }
 
-    // These endpoint patterns are tried in order for each srcId
-    let path_patterns: &[&str] = &[
-        "/api/src-server/{}",
-        "/api/source/{}",
-        "/api/episode-src/{}",
-        "/api/stream/{}",
-    ];
-
-    let mut last_error = String::from("All endpoint patterns exhausted");
-
-    for src_id in &src_ids {
-        for pattern in path_patterns {
-            let url = format!("{}{}", BASE, pattern.replace("{}", src_id));
-
-            let raw = match client.get(&url).send().await {
-                Ok(r) => match r.text().await {
-                    Ok(t) => t,
-                    Err(e) => { last_error = e.to_string(); continue; }
-                },
-                Err(e) => { last_error = e.to_string(); continue; }
-            };
-
-            eprintln!("[AniLab] {} (srcId={}):\n{}", url, src_id, &raw[..raw.len().min(600)]);
-
-            // If the API returned an error JSON, try the next pattern
-            if raw.contains("\"error\"") && !raw.contains("\"serverSrc\"") && !raw.contains("\"file\"") {
-                last_error = format!("API error from {}: {}", url, &raw[..raw.len().min(120)]);
-                continue;
-            }
-
-            let src_resp: SrcServerResponse = match serde_json::from_str(&raw) {
-                Ok(v) => v,
-                Err(e) => {
-                    last_error = format!("JSON parse error ({url}): {e}");
-                    continue;
-                }
-            };
-
-            let rest_entries: Vec<&RestEntry> = src_resp
-                .server_src
-                .as_ref()
-                .and_then(|v| v.first())
-                .and_then(|s| s.rest.as_ref())
-                .map(|r| r.iter().collect())
-                .unwrap_or_default();
-
-            if rest_entries.is_empty() {
-                last_error = format!("Empty rest[] from {url}");
-                continue;
-            }
-
-            let sources: Vec<StreamSource> = rest_entries
-                .into_iter()
-                .filter_map(|entry| {
-                    let url = entry.file.clone()?;
-                    let label = entry.label.clone()
-                        .or_else(|| entry.quality.as_ref().and_then(|q| q.as_str().map(String::from)))
-                        .or_else(|| entry.quality.as_ref().and_then(|q| q.as_i64().map(|n| format!("{}p", n))))
-                        .unwrap_or_else(|| quality_from_url(&url));
-                    let kind = entry.kind.clone().unwrap_or_else(|| "hls".to_string());
-                    Some(StreamSource { url, label, kind })
-                })
-                .collect();
-
-            if !sources.is_empty() {
-                return Ok(sources);
-            }
+    // Walk priority list — only consider sources with an encoded (--) URL.
+    for &preferred in SOURCE_PRIORITY {
+        if let Some(src) = sources.iter().find(|s| {
+            s.source_name.eq_ignore_ascii_case(preferred) && s.source_url.starts_with("--")
+        }) {
+            let encoded = src.source_url.trim_start_matches('-');
+            let decoded = decode_url(encoded);
+            eprintln!("[AniLab] Chose source '{}', decoded path: {}", preferred, decoded);
+            return fetch_clock_path(&client, &decoded).await;
         }
     }
 
+    // Fallback: any encoded source.
+    if let Some(src) = sources.iter().find(|s| s.source_url.starts_with("--")) {
+        let encoded = src.source_url.trim_start_matches('-');
+        let decoded = decode_url(encoded);
+        eprintln!("[AniLab] Fallback source '{}', decoded path: {}", src.source_name, decoded);
+        return fetch_clock_path(&client, &decoded).await;
+    }
+
     Err(format!(
-        "The Aniwatch streaming API is returning errors for all servers.\n\
-         This is an upstream issue with the hosted API (aniwatch-api-v1-0.onrender.com).\n\
-         Try again later or self-host the API.\n\
-         Last error: {last_error}\n\
-         srcIds tried: {}", src_ids.join(", ")
+        "No encoded (--) sourceUrl found for show='{}' episode='{}' mode='{}'.\n\
+         Available sources: {:?}",
+        show_id, episode, mode,
+        sources.iter().map(|s| &s.source_name).collect::<Vec<_>>()
     ))
 }
