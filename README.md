@@ -70,7 +70,7 @@ sudo pacman -S base-devel curl wget openssl rustup yt-dlp mpv
    ```
 
 ---
-
+ 
 <p align="center">
   <i>Created for the Linux anime community.</i>
 </p>
