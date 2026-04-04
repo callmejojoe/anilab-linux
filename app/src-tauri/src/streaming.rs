@@ -163,25 +163,46 @@ async fn fetch_clock_path(client: &Client, decoded_path: &str) -> Result<Vec<Vid
 
     // Iterate through all entries in `links`, extracting resolution + URL.
     if let Some(links) = v.get("links").and_then(|l| l.as_array()) {
-        let mut qualities: Vec<VideoQuality> = links
-            .iter()
-            .filter_map(|entry| {
-                let url = entry
-                    .get("link")
-                    .or_else(|| entry.get("src"))
-                    .and_then(|u| u.as_str())
-                    .map(|s| s.to_string())?;
+        let mut qualities: Vec<VideoQuality> = Vec::new();
+        for entry in links {
+            let url = match entry.get("link").or_else(|| entry.get("src")).and_then(|u| u.as_str()) {
+                Some(u) => u.to_string(),
+                None => continue,
+            };
 
-                let resolution = entry
-                    .get("resolutionStr")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("Auto")
-                    .to_string();
+            let resolution = entry
+                .get("resolutionStr")
+                .and_then(|r| r.as_str())
+                .unwrap_or("Auto")
+                .to_string();
 
-                eprintln!("[AniLab] quality found: {} → {}", resolution, url);
-                Some(VideoQuality { resolution, url })
-            })
-            .collect();
+            if url.contains("repackager.wixmp.com/video.wixstatic.com/video/") {
+                if let Some(start) = url.find("/video.wixstatic.com/video/") {
+                    let remainder = &url[start + 27..];
+                    let parts: Vec<&str> = remainder.split("/,").collect();
+                    if parts.len() >= 2 {
+                        let video_id = parts[0];
+                        let after_comma = parts[1];
+                        if let Some(end_idx) = after_comma.find(",/mp4") {
+                            let qualities_str = &after_comma[..end_idx];
+                            for q in qualities_str.split(',') {
+                                if !q.is_empty() {
+                                    let direct_url = format!("https://video.wixstatic.com/video/{}/{}/mp4/file.mp4", video_id, q);
+                                    eprintln!("[AniLab] quality found: {} → {}", q, direct_url);
+                                    qualities.push(VideoQuality { resolution: q.to_string(), url: direct_url });
+                                }
+                            }
+                            eprintln!("[AniLab] quality found: Auto (HLS) → {}", url);
+                            qualities.push(VideoQuality { resolution: "Auto (HLS)".to_string(), url: url.clone() });
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            eprintln!("[AniLab] quality found: {} → {}", resolution, url);
+            qualities.push(VideoQuality { resolution, url });
+        }
 
         if qualities.is_empty() {
             return Err(format!("links array present but no usable entries found: {v}"));
@@ -377,6 +398,7 @@ pub async fn get_stream_url(
                 );
                 continue;
             }
+
             eprintln!("[AniLab] Source '{}' decoded to a direct video URL, using as-is.", preferred);
             return Ok(vec![VideoQuality { resolution: "Auto".to_string(), url: decoded }]);
         }

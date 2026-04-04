@@ -486,7 +486,7 @@ function pickQuality(qualities) {
       const btn = document.createElement("button");
       btn.textContent = q.resolution || "Auto";
       btn.style.cssText = [
-        "background:#1f1208", "color:#e8d5b0",
+        "background:#c49a6c", "color:#e8d5b0",
         "border:1px solid #3d2415", "border-radius:6px",
         "padding:9px 14px", "cursor:pointer",
         "font-size:0.82rem", "font-weight:700",
@@ -494,8 +494,8 @@ function pickQuality(qualities) {
         "text-align:left", "letter-spacing:0.04em",
         "transition:background 0.15s,border-color 0.15s",
       ].join(";");
-      btn.onmouseenter = () => { btn.style.background = "#8b5e3c"; btn.style.borderColor = "#c49a6c"; };
-      btn.onmouseleave = () => { btn.style.background = "#1f1208"; btn.style.borderColor = "#3d2415"; };
+      btn.onmouseenter = () => { btn.style.background = "#d4a87a"; btn.style.borderColor = "#e8d5b0"; };
+      btn.onmouseleave = () => { btn.style.background = "#c49a6c"; btn.style.borderColor = "#3d2415"; };
       btn.addEventListener("click", () => { cleanup(); resolve(q); });
       list.appendChild(btn);
     }
