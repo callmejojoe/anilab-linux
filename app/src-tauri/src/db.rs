@@ -292,6 +292,13 @@ pub fn get_history() -> Result<Vec<HistoryRow>, String> {
     Ok(rows)
 }
 
+#[tauri::command]
+pub fn clear_history() -> Result<(), String> {
+    let conn = open_and_init().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM history", params![]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── Downloads Tracking ────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]

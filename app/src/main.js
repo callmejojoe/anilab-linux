@@ -1412,6 +1412,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     runScan(path);
   });
 
+  // Clear history button
+  const clearHistoryBtn = document.getElementById("clear-history-btn");
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener("click", async () => {
+      try {
+        await invoke("clear_history");
+        showToast("Watch history cleared.");
+        await renderHistory();
+      } catch (err) {
+        showToast(`Failed to clear history: ${err}`);
+      }
+    });
+  }
+
   // Load library
   await renderLibrary();
 

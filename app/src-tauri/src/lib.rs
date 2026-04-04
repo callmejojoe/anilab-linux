@@ -26,6 +26,7 @@ pub fn run() {
             db::remove_from_library,
             db::record_history,
             db::get_history,
+            db::clear_history,
             db::record_download,
             db::update_download_status,
             db::get_downloads,
