@@ -1221,8 +1221,9 @@ async function renderDownloads() {
           <span style="font-family:var(--mono);font-size:0.66rem;color:var(--text-muted);opacity:0.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;">${row.save_path}</span>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:80px;">
-          <span style="font-family:var(--mono);font-size:0.7rem;color:${statusColor};font-weight:700;letter-spacing:0.06em;">[${row.status.toUpperCase()}]</span>
+          <span style="font-family:var(--mono);font-size:0.7rem;color:${statusColor};font-weight:700;letter-spacing:0.06em;" id="dl-row-status-${row.id}">[${row.status.toUpperCase()}]</span>
           ${row.status === 'downloading' ? `
+          <span id="dl-row-size-${row.id}" style="font-family:var(--mono);font-size:0.65rem;color:var(--text-muted);display:none;"></span>
           <div style="width:100%;height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
             <div id="dl-row-prog-${row.id}" style="width:${row.progress}%;height:100%;background:${statusColor};transition:width 0.3s;"></div>
           </div>
@@ -1260,15 +1261,25 @@ function initDownloads() {
   });
 
   listen("download-progress", (event) => {
-    const { id, progress } = event.payload;
+    const { id, progress, size_text } = event.payload;
     if (gdBar.classList.contains("hidden") && openDownloads > 0) {
       gdBar.classList.remove("hidden");
     }
-    gdStatus.textContent = `${progress}%`;
+    
+    let statusStr = `${progress}%`;
+    if (size_text) statusStr += ` of ${size_text}`;
+    
+    gdStatus.textContent = statusStr;
     gdProgress.style.width = `${progress}%`;
 
     const rowProg = document.getElementById(`dl-row-prog-${id}`);
     if (rowProg) rowProg.style.width = `${progress}%`;
+    
+    const rowSize = document.getElementById(`dl-row-size-${id}`);
+    if (rowSize) {
+      rowSize.style.display = "block";
+      rowSize.textContent = statusStr;
+    }
   });
 
   listen("download-complete", (event) => {

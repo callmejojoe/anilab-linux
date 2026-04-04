@@ -8,12 +8,29 @@ use std::process::Stdio;
 use regex::Regex;
 use once_cell::sync::Lazy;
 
-static PROGRESS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[download\]\s+([\d\.]+)%").unwrap());
+static PROGRESS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[download\]\s+([\d\.]+)%(?:.*\bof\s+([~\d\.]+[a-zA-Z]+))?").unwrap());
 
 #[derive(Clone, serde::Serialize)]
 pub struct DownloadProgressPayload {
     pub id: i64,
     pub progress: u8,
+    pub size_text: Option<String>,
+}
+
+fn format_size(bytes: u64) -> String {
+    let kb = 1024_f64;
+    let mb = kb * 1024_f64;
+    let gb = mb * 1024_f64;
+    let b = bytes as f64;
+    if b >= gb {
+        format!("{:.2}GiB", b / gb)
+    } else if b >= mb {
+        format!("{:.2}MiB", b / mb)
+    } else if b >= kb {
+        format!("{:.2}KiB", b / kb)
+    } else {
+        format!("{}B", bytes)
+    }
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -96,6 +113,7 @@ pub fn download_episode(
                         let _ = app.emit("download-progress", DownloadProgressPayload {
                             id: download_id,
                             progress,
+                            size_text: Some(format_size(total_size as u64)),
                         });
                     }
                 }
@@ -127,9 +145,11 @@ pub fn download_episode(
                 while let Ok(Some(line)) = reader.next_line().await {
                     if let Some(caps) = PROGRESS_RE.captures(&line) {
                         if let Ok(percent) = caps[1].parse::<f64>() {
+                            let size_text = caps.get(2).map(|m| m.as_str().to_string());
                             let _ = app.emit("download-progress", DownloadProgressPayload {
                                 id: download_id,
                                 progress: percent.round() as u8,
+                                size_text,
                             });
                         }
                     }
