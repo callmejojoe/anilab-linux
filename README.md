@@ -22,7 +22,7 @@ Here is what is currently working in the application:
 
 - **Search:** Search for anime titles using anilist APIs.
 - **Streaming:** Watch episodes directly in the app using a built-in HTML5 video player.
-- **Downloads:** Download episodes for offline viewing using `yt-dlp`.
+- **Downloads:** Download episodes for offline viewing with full quality selection, using a dynamic engine that routes to native `reqwest` MP4 streams or `yt-dlp` for encrypted HLS.
 - **Library & Metadata:** Track your watch progress and fetch show metadata using AniList.
 - **Interface:** A responsive coffee-themed UI designed for desktop use.
 - **Stream Decoding:** Backend XOR decoding to resolve direct stream URLs.
@@ -31,7 +31,7 @@ Here is what is currently working in the application:
 
 The following features are planned for future updates:
 
-- [ ] **Download Quality Selection:** Choose the video resolution before downloading.
+- [x] **Download Quality Selection:** Choose the video resolution before downloading.
 - [ ] **Local Playback:** Play downloaded video files directly within the application.
 - [ ] **UI Updates:** Continue improving the interface and user experience.
 - [ ] **Distribution Packaging:** Create Flatpak and AppImage packages to support non-Arch Linux distributions.
